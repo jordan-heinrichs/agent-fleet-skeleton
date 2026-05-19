@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "last_updated": "2026-05-19",
+  "mission": "Edit this to describe what this fleet is for. Be specific. One sentence.",
+  "owner": "you",
+  "repo": "https://github.com/your-org/your-repo",
+  "coverage": {
+    "total_files": 0,
+    "by_category": {}
+  },
+  "completion_metrics": {
+    "example_metric_filled_count": 0,
+    "example_metric_target": 100
+  },
+  "current_gaps_ranked": [
+    "Edit this list. Workers will preferentially pick targets that fill these gaps.",
+    "Order from most-needed to least-needed."
+  ],
+  "fleet_health": {
+    "last_supervisor_decision": null,
+    "polish_ratio_window": 0,
+    "stuck_flag": false
+  },
+  "loop_indicators": {
+    "max_polish_ratio": 0.6,
+    "max_consecutive_same_role": 3,
+    "max_consecutive_zero_fires": 3
+  }
+}

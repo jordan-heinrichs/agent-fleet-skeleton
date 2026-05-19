@@ -1,0 +1,116 @@
+# agent-fleet-skeleton — Docker Compose
+#
+# Boot:
+#   docker compose up -d --build
+# Watch:
+#   docker compose logs -f manager
+#   docker compose logs -f worker
+# Stop:
+#   docker compose stop
+# Teardown:
+#   docker compose down
+#
+# AUTH NOTE: configured for Claude Max via OAuth on the mounted ~/.claude session.
+# Do NOT set ANTHROPIC_API_KEY in .env — that routes through API-key billing
+# and bypasses the Max subscription.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: fleet-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  manager:
+    build:
+      context: .
+      dockerfile: docker/manager/Dockerfile
+      args:
+        USER_UID: "${UID:-1000}"
+        USER_GID: "${GID:-1000}"
+    image: fleet-manager:latest
+    container_name: fleet-manager
+    restart: unless-stopped
+    working_dir: /workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TICK_INTERVAL_MINUTES: "${TICK_INTERVAL_MINUTES:-15}"
+      FLEET_SIZE: "${FLEET_SIZE:-2}"
+      WORKER_TIMEOUT_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"
+      CANARY_MODEL: "${CANARY_MODEL:-claude-haiku-4-5-20251001}"
+      ACTIVE_PROJECT: "${ACTIVE_PROJECT:-example-project}"
+      REDIS_URL: "redis://redis:6379"
+      JOB_QUEUE: "fleet:jobs"
+      RESULT_QUEUE: "fleet:results"
+      AGENT_AUTO_PUSH: "${AGENT_AUTO_PUSH:-false}"
+      BRANCH: "${BRANCH:-main}"
+      GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/fleet/.ssh-writable/known_hosts'
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      # Claude Max credentials — same host session as your interactive Claude Code.
+      - type: bind
+        source: ${HOME}/.claude
+        target: /home/fleet/.claude
+      - type: bind
+        source: ${HOME}/.claude.json
+        target: /home/fleet/.claude.json.host
+        read_only: true
+      # SSH key — required only if AGENT_AUTO_PUSH=true.
+      - type: bind
+        source: ${HOME}/.ssh
+        target: /home/fleet/.ssh
+        read_only: true
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker/Dockerfile
+      args:
+        USER_UID: "${UID:-1000}"
+        USER_GID: "${GID:-1000}"
+    image: fleet-worker:latest
+    restart: unless-stopped
+    working_dir: /workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      JOB_QUEUE: "fleet:jobs"
+      RESULT_QUEUE: "fleet:results"
+      CLAUDE_MAX_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"
+      AGENT_MODEL: "${AGENT_MODEL:-claude-sonnet-4-7}"
+      ACTIVE_PROJECT: "${ACTIVE_PROJECT:-example-project}"
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+      - type: bind
+        source: ${HOME}/.claude
+        target: /home/fleet/.claude
+      - type: bind
+        source: ${HOME}/.claude.json
+        target: /home/fleet/.claude.json.host
+        read_only: true
+    deploy:
+      replicas: ${FLEET_SIZE:-2}
