@@ -69,6 +69,12 @@ build_prompt() {
   brief=$(extract_role_brief "$role")
   project_targets=$(cat "projects/${project}/PROJECT_TARGETS.md" 2>/dev/null || echo "(no targets file found)")
   ledger_tail=$(tail -60 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null || echo "(empty ledger)")
+  # Strip any line that doesn't match the canonical ledger format before
+  # embedding — prevents injected instructions in the ledger from reaching
+  # subsequent worker prompts.
+  ledger_tail_safe=$(printf '%s\n' "$ledger_tail" \
+    | grep -E '^- .+ ← [a-z-]+ \(fire #[0-9]+\)$' \
+    || echo "(empty ledger)")
 
   cat > "$tmp" <<PROMPT
 You are a worker in an autonomous agent fleet (fire #${fire_id}).
@@ -93,7 +99,7 @@ ${project_targets}
 ANTI-LOOP LEDGER TAIL (last 60 lines — DO NOT duplicate)
 ═══════════════════════════════════════════════════════════════════════
 
-${ledger_tail}
+${ledger_tail_safe}
 
 ═══════════════════════════════════════════════════════════════════════
 TASK
@@ -178,6 +184,10 @@ while true; do
 
   START_TS=$(date +%s)
   CLAUDE_LOG=$(mktemp /tmp/fleet-claude-XXXXXX.log)
+  # --dangerously-skip-permissions cannot be removed — Claude CLI requires it
+  # to operate non-interactively. Blast radius is limited by the read-only
+  # bind mount on /workspace/orchestrator in docker-compose.yml: workers
+  # cannot overwrite NORTH_STAR.json, the ledger, or entrypoint scripts.
   timeout "${CLAUDE_MAX_MINUTES}m" claude \
     --dangerously-skip-permissions \
     --model "$MODEL" \
