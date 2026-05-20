@@ -105,6 +105,14 @@ services:
       - type: bind
         source: .
         target: /workspace
+      # orchestrator/ is read-only for workers — the manager owns those files.
+      # This limits the blast radius of --dangerously-skip-permissions: a
+      # misbehaving worker cannot overwrite NORTH_STAR.json, the ledger, or
+      # the entrypoint scripts even with unrestricted Claude tool access.
+      - type: bind
+        source: ./orchestrator
+        target: /workspace/orchestrator
+        read_only: true
       - type: bind
         source: ${HOME}/.claude
         target: /home/fleet/.claude

@@ -66,6 +66,8 @@ Each worker container does the same simple loop forever.
 
 Workers write straight to the bind-mounted workspace, so anything Claude produces lands on the host filesystem in real time. The manager picks it up at the end of the fire and commits it.
 
+**A note on `--dangerously-skip-permissions`:** Claude CLI requires this flag to run non-interactively — it cannot be removed. The blast radius is limited structurally: `orchestrator/` is mounted read-only inside every worker container, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoint scripts. Workers can only write to `projects/<name>/` and their own temp files.
+
 ## The three-phase workflow
 
 This skeleton is generic on purpose. You can wire it up to do almost anything but the most productive pattern in practice is a three-phase pipeline. Each phase is a worker role you define.
