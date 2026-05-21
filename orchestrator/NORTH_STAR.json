@@ -1,20 +1,27 @@
 {
   "schemaVersion": 1,
-  "last_updated": "2026-05-19",
-  "mission": "Edit this to describe what this fleet is for. Be specific. One sentence.",
+  "last_updated": "2026-05-21",
+  "mission": "Research and document established patterns for building autonomous AI agent systems, producing a reference library directly applicable to agent-fleet-skeleton.",
   "owner": "you",
-  "repo": "https://github.com/your-org/your-repo",
+  "repo": "https://github.com/jordan-heinrichs/agent-fleet-skeleton",
   "coverage": {
     "total_files": 0,
-    "by_category": {}
+    "by_category": {
+      "findings": 0,
+      "synthesis": 0
+    }
   },
   "completion_metrics": {
-    "example_metric_filled_count": 0,
-    "example_metric_target": 100
+    "findings_written": 0,
+    "findings_target": 6,
+    "synthesis_written": 0,
+    "synthesis_target": 2
   },
   "current_gaps_ranked": [
-    "Edit this list. Workers will preferentially pick targets that fill these gaps.",
-    "Order from most-needed to least-needed."
+    "Tier 1 findings: building-effective-agents, tool-use, multi-agent-systems",
+    "Tier 2 findings: langgraph-concepts, openai-swarm",
+    "Tier 3 findings: react-paper",
+    "Synthesis: cross-cutting patterns once 3+ findings exist"
   ],
   "fleet_health": {
     "last_supervisor_decision": null,
