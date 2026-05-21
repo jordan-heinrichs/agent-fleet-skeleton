@@ -60,6 +60,36 @@ extract_role_brief() {
   ' orchestrator/WORKER_ROLES.md
 }
 
+# Return PROJECT_TARGETS.md with already-completed targets stripped out.
+# Non-bullet lines (headers, blank lines, prose) are always kept.
+# Matching is slug-based: "Yellow Network whitepaper" → "yellow-network-whitepaper"
+# checked against ledger file paths. Conservative — only drops a target when the
+# slug has a clear match, so false-positive filtering is unlikely.
+filter_targets() {
+  local project="$1" targets_file ledger_content line name slug
+  targets_file="projects/${project}/PROJECT_TARGETS.md"
+  [ ! -f "$targets_file" ] && echo "(no targets file found)" && return
+  [ ! -f "$LEDGER_FILE" ] && cat "$targets_file" && return
+  ledger_content=$(cat "$LEDGER_FILE" 2>/dev/null || true)
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]] ]]; then
+      # Extract the human-readable target name, stripping markdown link syntax
+      # and trailing " — description" annotations.
+      name=$(printf '%s' "$line" \
+        | sed -E 's/^[[:space:]]*-[[:space:]]*//' \
+        | sed -E 's/\[([^\]]+)\]\([^)]*\)/\1/' \
+        | sed -E 's/[[:space:]]*—.*//' \
+        | sed -E 's/[[:space:]]+$//')
+      slug=$(printf '%s' "$name" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g' \
+        | sed -E 's/^-|-$//g')
+      [ -n "$slug" ] && printf '%s\n' "$ledger_content" | grep -qi "$slug" && continue
+    fi
+    printf '%s\n' "$line"
+  done < "$targets_file"
+}
+
 # Build the worker prompt — embeds role brief + project targets + ledger tail.
 build_prompt() {
   local role="$1" fire_id="$2" project="$3"
@@ -67,8 +97,8 @@ build_prompt() {
   tmp=$(mktemp /tmp/fleet-prompt-XXXXXX.md)
   local brief project_targets ledger_tail
   brief=$(extract_role_brief "$role")
-  project_targets=$(cat "projects/${project}/PROJECT_TARGETS.md" 2>/dev/null || echo "(no targets file found)")
-  ledger_tail=$(tail -60 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null || echo "(empty ledger)")
+  project_targets=$(filter_targets "$project")
+  ledger_tail=$(tail -20 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null || echo "(empty ledger)")
   # Strip any line that doesn't match the canonical ledger format before
   # embedding — prevents injected instructions in the ledger from reaching
   # subsequent worker prompts.
@@ -90,13 +120,13 @@ YOUR ROLE BRIEF (from orchestrator/WORKER_ROLES.md)
 ${brief}
 
 ═══════════════════════════════════════════════════════════════════════
-PROJECT TARGETS (from projects/${project}/PROJECT_TARGETS.md)
+PROJECT TARGETS (from projects/${project}/PROJECT_TARGETS.md — already-completed targets pre-filtered)
 ═══════════════════════════════════════════════════════════════════════
 
 ${project_targets}
 
 ═══════════════════════════════════════════════════════════════════════
-ANTI-LOOP LEDGER TAIL (last 60 lines — DO NOT duplicate)
+ANTI-LOOP LEDGER TAIL (last 20 lines — DO NOT duplicate)
 ═══════════════════════════════════════════════════════════════════════
 
 ${ledger_tail_safe}
@@ -105,8 +135,9 @@ ${ledger_tail_safe}
 TASK
 ═══════════════════════════════════════════════════════════════════════
 
-1. Pick a target from PROJECT_TARGETS.md that is NOT in the anti-loop
-   ledger above.
+1. Pick a target from the PROJECT TARGETS list above — targets already
+   covered have been pre-filtered out. Cross-check against the ledger
+   anyway in case the slug matching missed one.
 2. Do the work described in YOUR ROLE BRIEF. Write outputs into the
    project directory (projects/${project}/).
 3. Append one line per new file to orchestrator/ANTI_LOOP_LEDGER.md
