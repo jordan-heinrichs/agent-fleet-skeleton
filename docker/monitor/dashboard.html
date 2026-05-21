@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>agent-fleet monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #21262d;
+    --text: #e6edf3; --muted: #8b949e;
+    --green: #3fb950; --red: #f85149; --orange: #d29922; --blue: #58a6ff;
+  }
+  body { background: var(--bg); color: var(--text); font: 13px/1.5 'SF Mono','Fira Code','Cascadia Code',monospace; }
+
+  header {
+    padding: 12px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo { font-size: 14px; font-weight: 700; }
+  .badge {
+    padding: 2px 9px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  }
+  .badge-healthy { background: #1a7f37; color: #aff5b4; }
+  .badge-stuck   { background: #6e1a1a; color: #ffa198; }
+  .badge-waiting { background: #3d2b00; color: #e3b341; }
+  .ticker { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 2s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+  .mission { padding: 8px 24px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+
+  .stats { display: flex; border-bottom: 1px solid var(--border); }
+  .stat { flex: 1; padding: 12px 24px; border-right: 1px solid var(--border); }
+  .stat:last-child { border-right: none; }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .stat-value { font-size: 22px; font-weight: 600; margin-top: 3px; }
+  .stat-value.healthy { color: var(--green); }
+  .stat-value.stuck   { color: var(--red); }
+  .stat-value.waiting { color: var(--orange); }
+
+  main { display: grid; grid-template-columns: 1fr 1fr; }
+  .col { padding: 18px 24px; }
+  .col:first-child { border-right: 1px solid var(--border); }
+  .panel { margin-bottom: 22px; }
+  .panel:last-child { margin-bottom: 0; }
+  .panel-title {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .6px; color: var(--muted); margin-bottom: 10px;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .4px;
+    padding: 4px 8px; border-bottom: 1px solid var(--border);
+  }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  .ok, .healthy { color: var(--green); }
+  .stuck, .error, [class^="stuck"] { color: var(--red); }
+  .waiting, .no_files_written { color: var(--orange); }
+  .empty-row { color: var(--muted); font-style: italic; }
+
+  .stuck-banner {
+    background: #6e1a1a20; border: 1px solid #f8514950; border-radius: 6px;
+    padding: 10px 14px; margin-bottom: 16px; color: var(--red); font-size: 12px;
+    display: none;
+  }
+  .stuck-banner.visible { display: block; }
+
+  .ledger-row {
+    padding: 5px 0; border-bottom: 1px solid var(--border);
+    font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ledger-row:last-child { border-bottom: none; }
+  .l-path { color: var(--blue); }
+  .l-role { color: var(--green); }
+  .l-fire { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">agent-fleet</span>
+  <span class="badge badge-waiting" id="status-badge">—</span>
+  <span class="ticker">
+    <span class="dot"></span>
+    next refresh in <span id="countdown">10</span>s
+  </span>
+</header>
+
+<div class="mission" id="mission">loading…</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Fire</div>
+    <div class="stat-value" id="stat-fire">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Files this fire</div>
+    <div class="stat-value" id="stat-files">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Fleet size</div>
+    <div class="stat-value" id="stat-fleet">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Decision</div>
+    <div class="stat-value" id="stat-decision" style="font-size:14px;padding-top:5px">—</div>
+  </div>
+</div>
+
+<main>
+  <div class="col">
+    <div class="stuck-banner" id="stuck-banner">
+      Fleet is STUCK — inspect <code>orchestrator/STUCK.md</code> and <code>SUPERVISOR_LOG.jsonl</code>,
+      then remove STUCK.md to resume.
+    </div>
+    <div class="panel">
+      <div class="panel-title">Recent Fires</div>
+      <table>
+        <thead>
+          <tr><th>Fire</th><th>Decision</th><th>Files</th><th>When</th></tr>
+        </thead>
+        <tbody id="fires-tbody">
+          <tr><td colspan="4" class="empty-row">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="panel">
+      <div class="panel-title">Last Fire — Workers</div>
+      <table>
+        <thead>
+          <tr><th>Role</th><th>Status</th><th>Files</th><th>Duration</th></tr>
+        </thead>
+        <tbody id="reports-tbody">
+          <tr><td colspan="4" class="empty-row">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Recent Ledger</div>
+      <div id="ledger"><div class="empty-row">loading…</div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const INTERVAL = 10000;
+  let countdown = INTERVAL / 1000;
+
+  function decisionClass(d) {
+    if (!d) return '';
+    if (d === 'healthy') return 'healthy';
+    if (d.startsWith('stuck')) return 'stuck';
+    return 'waiting';
+  }
+
+  function badgeClass(s) {
+    if (s === 'healthy') return 'badge-healthy';
+    if (s && s.startsWith('stuck')) return 'badge-stuck';
+    return 'badge-waiting';
+  }
+
+  function reltime(ts) {
+    if (!ts) return '—';
+    const s = Math.floor((Date.now() - new Date(ts)) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+
+  // Parse "- path/to/file.md ← role (fire #N)" into coloured spans.
+  function ledgerHTML(line) {
+    const m = line.match(/^-\s+(.+?)\s+←\s+([a-z-]+)\s+\(fire #(\d+)\)$/);
+    if (!m) return line;
+    const filename = m[1].split('/').pop();
+    return `<span class="l-path">${filename}</span>`
+         + ` ← <span class="l-role">${m[2]}</span>`
+         + ` <span class="l-fire">#${m[3]}</span>`;
+  }
+
+  function render(d) {
+    document.getElementById('mission').textContent =
+      d.mission || '(no mission set — edit orchestrator/NORTH_STAR.json)';
+
+    const badge = document.getElementById('status-badge');
+    badge.textContent = d.status || '—';
+    badge.className = 'badge ' + badgeClass(d.status);
+
+    const lf = d.last_fire || {};
+    document.getElementById('stat-fire').textContent = lf.fire_id ? '#' + lf.fire_id : '—';
+    document.getElementById('stat-files').textContent = lf.files_written_total ?? '—';
+    document.getElementById('stat-fleet').textContent = lf.fleet_size ?? '—';
+    const dec = document.getElementById('stat-decision');
+    dec.textContent = lf.decision || '—';
+    dec.className = 'stat-value ' + decisionClass(lf.decision);
+
+    document.getElementById('stuck-banner').classList.toggle('visible', !!d.stuck);
+
+    // Fires table
+    const ftb = document.getElementById('fires-tbody');
+    if (d.recent_fires && d.recent_fires.length) {
+      ftb.innerHTML = d.recent_fires.map(f =>
+        `<tr>
+          <td>#${f.fire_id}</td>
+          <td class="${decisionClass(f.decision)}">${f.decision}</td>
+          <td>${f.files_written_total}</td>
+          <td style="color:var(--muted)">${reltime(f.ts)}</td>
+        </tr>`
+      ).join('');
+    } else {
+      ftb.innerHTML = '<tr><td colspan="4" class="empty-row">No fires recorded yet</td></tr>';
+    }
+
+    // Worker reports
+    const rtb = document.getElementById('reports-tbody');
+    if (d.worker_reports && d.worker_reports.length) {
+      rtb.innerHTML = d.worker_reports.map(r =>
+        `<tr>
+          <td>${r.role}</td>
+          <td class="${decisionClass(r.status)}">${r.status}</td>
+          <td>${r.files_written}</td>
+          <td style="color:var(--muted)">${r.duration_seconds}s</td>
+        </tr>`
+      ).join('');
+    } else {
+      rtb.innerHTML = '<tr><td colspan="4" class="empty-row">No reports yet</td></tr>';
+    }
+
+    // Ledger
+    const ledgerEl = document.getElementById('ledger');
+    if (d.recent_ledger && d.recent_ledger.length) {
+      ledgerEl.innerHTML = d.recent_ledger
+        .map(l => `<div class="ledger-row">${ledgerHTML(l)}</div>`)
+        .join('');
+    } else {
+      ledgerEl.innerHTML = '<div class="empty-row">Ledger is empty</div>';
+    }
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/state');
+      render(await res.json());
+    } catch (e) {
+      console.error('refresh failed', e);
+    }
+    countdown = INTERVAL / 1000;
+  }
+
+  refresh();
+  setInterval(refresh, INTERVAL);
+  setInterval(() => {
+    countdown = Math.max(0, countdown - 1);
+    document.getElementById('countdown').textContent = countdown;
+  }, 1000);
+</script>
+</body>
+</html>

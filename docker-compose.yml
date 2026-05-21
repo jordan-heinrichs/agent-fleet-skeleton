@@ -78,6 +78,23 @@ services:
         target: /home/fleet/.ssh
         read_only: true
 
+  monitor:
+    build:
+      context: .
+      dockerfile: docker/monitor/Dockerfile
+    image: fleet-monitor:latest
+    container_name: fleet-monitor
+    restart: unless-stopped
+    ports:
+      - "${MONITOR_PORT:-8080}:8080"
+    environment:
+      MONITOR_PORT: "8080"
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+
   worker:
     build:
       context: .
