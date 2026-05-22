@@ -127,7 +127,7 @@ To run multiple parallel projects, copy `projects/example-project/` to a new nam
 
 **Manager logs say `canary FAILED`.** Your Claude Max session expired or hit a rate limit. The manager will sleep and retry on its own. If it persists for more than a couple of cycles, check `docker compose logs manager` for the actual error text and confirm your host can run `claude` directly.
 
-**Workers are running but no files appear.** Check `orchestrator/WORKER_REPORTS/` for the per-fire result envelopes. `status: no_files_written` means Claude ran but produced nothing, usually because the role brief is too vague or the targets are already exhausted. `status: fast_fail` means Claude exited in under 60 seconds, almost always a Max-plan throttle, and the worker is sleeping it off.
+**Workers are running but no files appear.** Check `orchestrator/WORKER_REPORTS/` for the per-fire result envelopes. `status: no_files_written` means Claude ran but produced nothing, usually because the role brief is too vague or the targets are already exhausted. `status: fast_fail` means Claude exited in under 60 seconds. That is almost always either a Max-plan throttle (the worker sleeps it off and retries) or an invalid `AGENT_MODEL` string for your plan (fix it in `.env` and rebuild). The `extra` field in the result envelope usually shows which.
 
 **Fleet wrote `STUCK.md`.** Read it. Read the supervisor log. Decide if you need new targets, a new role, or just to remove `STUCK.md` and retry.
 

@@ -29,8 +29,10 @@ where `<slug>` is a short kebab-case version of the target name.
 
 **Quality bar:** At least 100 lines. No filler. Every section must add signal.
 
-**Anti-loop:** Grep `orchestrator/ANTI_LOOP_LEDGER.md` for the target slug
-before writing. If it appears, abort and pick another target.
+**Anti-loop:** The recent ledger tail is included in your prompt. Check it
+before picking a target. If the target slug already appears, abort and pick
+another. (You cannot write the ledger yourself — the manager records your
+output automatically.)
 
 ---
 

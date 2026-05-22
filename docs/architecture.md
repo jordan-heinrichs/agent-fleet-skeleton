@@ -56,15 +56,22 @@
    tail, and runs `claude --print` with the model from `AGENT_MODEL`.
 5. **Workers** write outputs straight to the bind-mounted workspace. After
    `claude` exits, the worker counts new files via `find` diff, packages a
-   result envelope, and LPUSHes it to `fleet:results`.
+   result envelope (including the list of new files), and LPUSHes it to
+   `fleet:results`. Workers never write `orchestrator/` themselves — it is
+   mounted read-only inside every worker container.
 6. **Manager** has been BRPOP-ing `fleet:results`. It collects N results
    with a deadline equal to worker timeout + 5-min grace. If the deadline
    fires with fewer than N results, it proceeds anyway.
-7. **Manager** runs the supervisor pass. If three consecutive fires have
+7. **Manager** writes the anti-loop ledger. Because workers cannot touch
+   `orchestrator/`, the manager pulls each result's `new_files` list, builds
+   one ledger line per file, dedupes them, and appends to
+   `ANTI_LOOP_LEDGER.md`. The manager is the single owner of every
+   `orchestrator/` write.
+8. **Manager** runs the supervisor pass. If three consecutive fires have
    produced zero files, it writes `STUCK.md` and halts the loop.
-8. **Manager** `git add -A`, commits with a fire-id-tagged message, and
+9. **Manager** `git add -A`, commits with a fire-id-tagged message, and
    optionally pushes if `AGENT_AUTO_PUSH=true`.
-9. **Manager** sleeps `TICK_INTERVAL_MINUTES`.
+10. **Manager** sleeps `TICK_INTERVAL_MINUTES`.
 
 ## Auth model
 
