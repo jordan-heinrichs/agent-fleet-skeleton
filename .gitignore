@@ -12,6 +12,9 @@ orchestrator/FLEET_SIZE
 orchestrator/last-canary.log
 orchestrator/last-tick.log
 
+# Claude Code project settings (created automatically by the CLI)
+.claude/
+
 # OS / editor
 .DS_Store
 Thumbs.db
