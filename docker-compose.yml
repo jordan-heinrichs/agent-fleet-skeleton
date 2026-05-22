@@ -16,15 +16,15 @@
 
 services:
   redis:
-    image: redis:7-alpine
+    build:
+      context: .
+      dockerfile: docker/redis/Dockerfile
+    image: fleet-redis:latest
     container_name: fleet-redis
     restart: unless-stopped
-    command:
-      - redis-server
-      - --save
-      - ""
-      - --appendonly
-      - "no"
+    environment:
+      REDIS_MANAGER_PASS: "${REDIS_MANAGER_PASS:-fleet-mgr-secret}"
+      REDIS_WORKER_PASS:  "${REDIS_WORKER_PASS:-fleet-wkr-secret}"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -51,10 +51,12 @@ services:
     environment:
       TICK_INTERVAL_MINUTES: "${TICK_INTERVAL_MINUTES:-15}"
       FLEET_SIZE: "${FLEET_SIZE:-2}"
+      MAX_FLEET_SIZE: "${MAX_FLEET_SIZE:-4}"
+      MIN_TICK_INTERVAL_MINUTES: "${MIN_TICK_INTERVAL_MINUTES:-5}"
       WORKER_TIMEOUT_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"
       CANARY_MODEL: "${CANARY_MODEL:-claude-haiku-4-5-20251001}"
       ACTIVE_PROJECT: "${ACTIVE_PROJECT:-example-project}"
-      REDIS_URL: "redis://redis:6379"
+      REDIS_URL: "redis://manager:${REDIS_MANAGER_PASS:-fleet-mgr-secret}@redis:6379"
       JOB_QUEUE: "fleet:jobs"
       RESULT_QUEUE: "fleet:results"
       AGENT_AUTO_PUSH: "${AGENT_AUTO_PUSH:-false}"
@@ -112,7 +114,7 @@ services:
       - path: .env
         required: false
     environment:
-      REDIS_URL: "redis://redis:6379"
+      REDIS_URL: "redis://worker:${REDIS_WORKER_PASS:-fleet-wkr-secret}@redis:6379"
       JOB_QUEUE: "fleet:jobs"
       RESULT_QUEUE: "fleet:results"
       CLAUDE_MAX_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"

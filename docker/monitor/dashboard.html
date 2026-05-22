@@ -36,6 +36,7 @@
   .stat:last-child { border-right: none; }
   .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
   .stat-value { font-size: 22px; font-weight: 600; margin-top: 3px; }
+  .stat-value.sm { font-size: 16px; padding-top: 4px; }
   .stat-value.healthy { color: var(--green); }
   .stat-value.stuck   { color: var(--red); }
   .stat-value.waiting { color: var(--orange); }
@@ -78,6 +79,29 @@
   .l-path { color: var(--blue); }
   .l-role { color: var(--green); }
   .l-fire { color: var(--muted); }
+
+  /* Live config panel */
+  .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .config-item { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+  .config-key { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .config-val { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .config-val.adjusted { color: var(--orange); }
+  .config-default { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+  /* Throttle / session health */
+  .throttle-summary { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .throttle-pct { font-size: 26px; font-weight: 600; }
+  .throttle-meta { font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .session-dots { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 10px; }
+  .sess-dot {
+    width: 12px; height: 12px; border-radius: 3px; cursor: default;
+    transition: transform .1s;
+  }
+  .sess-dot:hover { transform: scale(1.4); }
+  .sess-ok   { background: var(--green); }
+  .sess-warn { background: var(--orange); }
+  .sess-bad  { background: var(--red); }
+  .sess-dots-label { font-size: 10px; color: var(--muted); margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -93,6 +117,7 @@
 
 <div class="mission" id="mission">loading…</div>
 
+<!-- Row 1: current fire stats -->
 <div class="stats">
   <div class="stat">
     <div class="stat-label">Fire</div>
@@ -108,7 +133,27 @@
   </div>
   <div class="stat">
     <div class="stat-label">Decision</div>
-    <div class="stat-value" id="stat-decision" style="font-size:14px;padding-top:5px">—</div>
+    <div class="stat-value sm" id="stat-decision">—</div>
+  </div>
+</div>
+
+<!-- Row 2: cumulative activity stats -->
+<div class="stats" style="background: #0a0f14;">
+  <div class="stat">
+    <div class="stat-label">Total fires</div>
+    <div class="stat-value" id="stat-total-fires">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Total files written</div>
+    <div class="stat-value" id="stat-total-files">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Fires last hour</div>
+    <div class="stat-value" id="stat-fires-hr">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Avg worker duration</div>
+    <div class="stat-value sm" id="stat-avg-dur">—</div>
   </div>
 </div>
 
@@ -129,9 +174,53 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Throttle / session health panel -->
+    <div class="panel">
+      <div class="panel-title">Session Health (last 20 workers)</div>
+      <div class="throttle-summary">
+        <span class="throttle-pct healthy" id="throttle-pct">—%</span>
+        <div class="throttle-meta">
+          <div id="throttle-healthy-label">— healthy</div>
+          <div>Last throttle: <span id="throttle-last">—</span></div>
+        </div>
+      </div>
+      <div class="session-dots" id="session-dots"></div>
+      <div class="sess-dots-label">Each square = one worker session &nbsp;·&nbsp;
+        <span style="color:var(--green)">■</span> ok &nbsp;
+        <span style="color:var(--orange)">■</span> no files &nbsp;
+        <span style="color:var(--red)">■</span> throttled
+      </div>
+    </div>
   </div>
 
   <div class="col">
+    <div class="panel">
+      <div class="panel-title">Live Config <span id="config-updated" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"></span></div>
+      <div class="config-grid" id="config-grid">
+        <div class="config-item">
+          <div class="config-key">Fleet size</div>
+          <div class="config-val" id="cfg-fleet">—</div>
+          <div class="config-default" id="cfg-fleet-def"></div>
+        </div>
+        <div class="config-item">
+          <div class="config-key">Tick interval</div>
+          <div class="config-val" id="cfg-tick">—</div>
+          <div class="config-default" id="cfg-tick-def"></div>
+        </div>
+        <div class="config-item">
+          <div class="config-key">Max fleet (ceiling)</div>
+          <div class="config-val" id="cfg-max-fleet" style="font-size:16px">—</div>
+          <div class="config-default" id="cfg-min-tick-label"></div>
+        </div>
+        <div class="config-item">
+          <div class="config-key">Throttle rate (window)</div>
+          <div class="config-val" id="cfg-tpct" style="font-size:16px">—</div>
+          <div class="config-default" id="cfg-tpct-detail"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="panel-title">Last Fire — Workers</div>
       <table>
@@ -186,6 +275,13 @@
          + ` <span class="l-fire">#${m[3]}</span>`;
   }
 
+  function sessClass(status) {
+    if (!status) return 'sess-ok';
+    if (status === 'exhausted' || status === 'fast_fail') return 'sess-bad';
+    if (status === 'no_files_written') return 'sess-warn';
+    return 'sess-ok';
+  }
+
   function render(d) {
     document.getElementById('mission').textContent =
       d.mission || '(no mission set — edit orchestrator/NORTH_STAR.json)';
@@ -200,9 +296,72 @@
     document.getElementById('stat-fleet').textContent = lf.fleet_size ?? '—';
     const dec = document.getElementById('stat-decision');
     dec.textContent = lf.decision || '—';
-    dec.className = 'stat-value ' + decisionClass(lf.decision);
+    dec.className = 'stat-value sm ' + decisionClass(lf.decision);
 
     document.getElementById('stuck-banner').classList.toggle('visible', !!d.stuck);
+
+    // Live config panel
+    const rc = d.runtime_config || {};
+    if (rc.fleet_size != null) {
+      const fleetAdj = rc.fleet_size !== rc.fleet_size_default;
+      const tickAdj  = rc.tick_interval_minutes !== rc.tick_interval_default;
+      const cfFleet = document.getElementById('cfg-fleet');
+      cfFleet.textContent = rc.fleet_size;
+      cfFleet.className = 'config-val' + (fleetAdj ? ' adjusted' : '');
+      document.getElementById('cfg-fleet-def').textContent =
+        fleetAdj ? `default: ${rc.fleet_size_default}` : 'at default';
+
+      const cfTick = document.getElementById('cfg-tick');
+      cfTick.textContent = rc.tick_interval_minutes + 'm';
+      cfTick.className = 'config-val' + (tickAdj ? ' adjusted' : '');
+      document.getElementById('cfg-tick-def').textContent =
+        tickAdj ? `default: ${rc.tick_interval_default}m` : 'at default';
+
+      document.getElementById('cfg-max-fleet').textContent =
+        rc.max_fleet_size + ' / min ' + rc.min_tick_interval + 'm';
+      document.getElementById('cfg-min-tick-label').textContent = 'env-var ceilings';
+
+      const tpct = rc.throttle_pct ?? 0;
+      const cfTpct = document.getElementById('cfg-tpct');
+      cfTpct.textContent = tpct + '%';
+      cfTpct.className = 'config-val ' + (tpct === 0 ? 'healthy' : tpct < 25 ? 'waiting' : 'stuck');
+      document.getElementById('cfg-tpct-detail').textContent =
+        `${rc.throttle_count ?? 0}/${rc.total_sessions_checked ?? 0} sessions`;
+
+      document.getElementById('config-updated').textContent =
+        rc.ts ? '· updated ' + reltime(rc.ts) : '';
+    }
+
+    // Activity row
+    const act = d.activity || {};
+    document.getElementById('stat-total-fires').textContent = act.total_fires ?? '—';
+    document.getElementById('stat-total-files').textContent = act.total_files ?? '—';
+    document.getElementById('stat-fires-hr').textContent =
+      act.fires_last_hour != null ? act.fires_last_hour + '/hr' : '—';
+    document.getElementById('stat-avg-dur').textContent =
+      act.avg_duration ? act.avg_duration + 's' : '—';
+
+    // Session health / throttle panel
+    const t = d.throttle || {};
+    const healthy = (t.total || 0) - (t.count || 0);
+    const pct = t.pct ?? 0;
+    const pctEl = document.getElementById('throttle-pct');
+    pctEl.textContent = pct + '% throttled';
+    pctEl.className = 'throttle-pct ' + (pct === 0 ? 'healthy' : pct < 25 ? 'waiting' : 'stuck');
+    document.getElementById('throttle-healthy-label').textContent =
+      t.total ? `${healthy}/${t.total} healthy` : 'no data yet';
+    document.getElementById('throttle-last').textContent =
+      t.last_ts ? reltime(t.last_ts) : 'never';
+
+    const dotsEl = document.getElementById('session-dots');
+    if (t.sessions && t.sessions.length) {
+      dotsEl.innerHTML = t.sessions.map(s => {
+        const tip = `${s.role || '?'} — ${s.status || '?'} (${reltime(s.ts)})`;
+        return `<div class="sess-dot ${sessClass(s.status)}" title="${tip}"></div>`;
+      }).join('');
+    } else {
+      dotsEl.innerHTML = '<span style="color:var(--muted);font-size:11px">no session data yet</span>';
+    }
 
     // Fires table
     const ftb = document.getElementById('fires-tbody');
