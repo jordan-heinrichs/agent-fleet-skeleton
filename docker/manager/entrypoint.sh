@@ -230,6 +230,11 @@ while true; do
   banner "AWAIT RESULTS (timeout ${WORKER_TIMEOUT_MINUTES}m each, +5m grace)"
   results_collected=0
   total_files_written=0
+  # The manager owns the anti-loop ledger now. Workers cannot write
+  # orchestrator/ (it is mounted read-only — see C-01). Each result carries
+  # a .new_files[] array; we accumulate ledger lines here and append once,
+  # deduped, after the fire so parallel find-diff overlap can't double-list.
+  LEDGER_TMP=$(mktemp)
   DEADLINE=$(( $(date +%s) + WORKER_TIMEOUT_MINUTES * 60 + 300 ))
   while [ "$results_collected" -lt "${#PICKED_ROLES[@]}" ]; do
     NOW=$(date +%s)
@@ -247,7 +252,18 @@ while true; do
     total_files_written=$((total_files_written + files))
     results_collected=$((results_collected + 1))
     printf '%s\n' "$payload" > "$ORCH_DIR/WORKER_REPORTS/fire-${fire_id}-${role}.json"
+    # Pull ledger lines straight from the result envelope.
+    printf '%s' "$payload" \
+      | jq -r '.new_files[]? as $f | "- \($f) ← \(.role) (fire #\(.fire_id))"' \
+      >> "$LEDGER_TMP" 2>/dev/null || true
   done
+
+  # Append accumulated ledger lines, deduped by full line, newest fire last.
+  if [ -s "$LEDGER_TMP" ]; then
+    awk '!seen[$0]++' "$LEDGER_TMP" >> "$LEDGER_FILE"
+    log "ledger: appended $(awk '!seen[$0]++' "$LEDGER_TMP" | wc -l | tr -d ' ') entries"
+  fi
+  rm -f "$LEDGER_TMP"
 
   # 5. Supervisor
   banner "SUPERVISOR PASS"

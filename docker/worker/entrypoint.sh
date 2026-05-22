@@ -109,15 +109,14 @@ TASK
    ledger above.
 2. Do the work described in YOUR ROLE BRIEF. Write outputs into the
    project directory (projects/${project}/).
-3. Append one line per new file to orchestrator/ANTI_LOOP_LEDGER.md
-   in the format:
-   - <path/to/new/file.md> ← ${role} (fire #${fire_id})
-4. End your response with a single JSON line summarizing what you did:
+3. End your response with a single JSON line summarizing what you did:
    {"role":"${role}","fire_id":${fire_id},"files_written":N,"targets_aborted":N}
 
 CONSTRAINTS:
-- Do NOT modify orchestrator/NORTH_STAR.json (manager owns).
-- Do NOT modify files outside projects/${project}/ and the ledger.
+- The orchestrator/ directory is READ-ONLY for you. The fleet manager
+  records your new files in the anti-loop ledger automatically — you do
+  not need to (and cannot) write there.
+- Do NOT modify files outside projects/${project}/.
 - Do NOT commit or push (manager handles git).
 
 GO. You have ${CLAUDE_MAX_MINUTES} minutes.
@@ -126,7 +125,7 @@ PROMPT
 }
 
 emit_result() {
-  local role="$1" fire_id="$2" status="$3" files="$4" aborts="$5" duration="$6" extra="${7:-}"
+  local role="$1" fire_id="$2" status="$3" files="$4" aborts="$5" duration="$6" extra="${7:-}" new_files_json="${8:-[]}"
   local payload
   payload=$(jq -nc \
     --arg role "$role" \
@@ -137,6 +136,7 @@ emit_result() {
     --arg aborts "$aborts" \
     --arg duration "$duration" \
     --arg extra "$extra" \
+    --argjson new_files "$new_files_json" \
     '{
        role: $role,
        fire_id: ($fire_id|tonumber),
@@ -145,6 +145,7 @@ emit_result() {
        files_written: ($files|tonumber),
        targets_aborted: ($aborts|tonumber),
        duration_seconds: ($duration|tonumber),
+       new_files: $new_files,
        extra: $extra,
        ts: (now | todate)
      }')
@@ -241,8 +242,14 @@ while true; do
   [ "$CLAUDE_EXIT" -ne 0 ] && STATUS="claude_exit_${CLAUDE_EXIT}"
   [ "$NEW_COUNT" -eq 0 ] && [ "$STATUS" = "ok" ] && STATUS="no_files_written"
 
+  # Package the new-file list as a JSON array so the manager can write the
+  # anti-loop ledger. Workers can no longer write orchestrator/ themselves
+  # (it is mounted read-only — see C-01), so the manager owns the ledger.
+  NEW_FILES_JSON=$(printf '%s\n' "$NEW_FILES_LIST" | grep -v '^[[:space:]]*$' | jq -R . | jq -s -c . 2>/dev/null)
+  [ -z "$NEW_FILES_JSON" ] && NEW_FILES_JSON="[]"
+
   emit_result "$role" "$fire_id" "$STATUS" "$NEW_COUNT" "$ABORTS" "$DURATION" \
-    "$(tail -2 "$CLAUDE_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)"
+    "$(tail -2 "$CLAUDE_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)" "$NEW_FILES_JSON"
   rm -f "$CLAUDE_LOG"
   log "JOB DONE: role=$role files=$NEW_COUNT"
 done
