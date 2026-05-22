@@ -19,7 +19,7 @@ You need Docker and a host `~/.claude` session (Claude Max). No API key.
 
 ### Adding a worker role
 
-Append an H2 section to `orchestrator/WORKER_ROLES.md` following the shape of
+Append an H2 section to `the pack ROLES.md` following the shape of
 the existing roles. Required parts: mission, sources, per-run output spec,
 quality bar, anti-loop note. The manager auto-discovers roles by H2 heading,
 so there is no registration step. Rebuild and the new role enters rotation on
@@ -27,7 +27,7 @@ the next fire.
 
 ### Adding a project
 
-Create `projects/<name>/PROJECT_TARGETS.md`, set `ACTIVE_PROJECT=<name>` in
+Create `packs/<name>/TARGETS.md`, set `ACTIVE_PACK=<name>` in
 `.env`, rebuild. The example project shows the expected layout.
 
 ## Changing the entrypoints

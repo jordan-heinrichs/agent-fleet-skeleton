@@ -1,0 +1,21 @@
+# SearXNG settings for fleet web grounding — local, no accounts, JSON enabled.
+use_default_settings: true
+
+server:
+  secret_key: "fleet-local-change-me-if-you-expose-this"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: bing
+    disabled: false

@@ -15,6 +15,7 @@ RUN apt-get update \
       jq \
       redis-tools \
       python3 \
+      python3-pip \
       python3-venv \
       pipx \
  && rm -rf /var/lib/apt/lists/*
@@ -30,6 +31,10 @@ ENV PIPX_HOME=/opt/pipx \
 RUN pipx install aider-chat \
  && pipx ensurepath || true
 
+# Web-grounding deps (research.py): search/fetch/extract + Redis cache client.
+RUN pip3 install --no-cache-dir --break-system-packages requests trafilatura pypdf redis \
+ || pip3 install --no-cache-dir requests trafilatura pypdf redis
+
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN userdel -r node 2>/dev/null || true \
@@ -40,9 +45,10 @@ RUN userdel -r node 2>/dev/null || true \
 WORKDIR /workspace
 
 COPY docker/worker/entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+COPY docker/worker/research.py /usr/local/bin/research.py
 COPY docker/adapters/ /usr/local/bin/adapters/
 RUN sed -i 's/\r$//' /usr/local/bin/worker-entrypoint.sh /usr/local/bin/adapters/*.sh \
- && chmod +x /usr/local/bin/worker-entrypoint.sh /usr/local/bin/adapters/*.sh
+ && chmod +x /usr/local/bin/worker-entrypoint.sh /usr/local/bin/research.py /usr/local/bin/adapters/*.sh
 
 ENV REDIS_URL=redis://redis:6379 \
     JOB_QUEUE=fleet:jobs \
@@ -54,7 +60,9 @@ ENV REDIS_URL=redis://redis:6379 \
     FALLBACK_MODEL=qwen2.5-coder:14b \
     OLLAMA_API_BASE=http://host.docker.internal:11434 \
     ADAPTER_DIR=/usr/local/bin/adapters \
-    ACTIVE_PROJECT=example-project
+    SEARXNG_URL=http://searxng:8080 \
+    CACHE_TTL=86400 \
+    ACTIVE_PACK=example-research
 
 USER fleet
 

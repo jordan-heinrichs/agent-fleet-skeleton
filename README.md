@@ -28,7 +28,7 @@ docker compose up -d --build  # build + start the fleet
 docker compose logs -f manager
 ```
 
-That's it. The manager runs a canary check, picks two roles, dispatches jobs to the workers, and starts filling `projects/example-project/findings/` with content.
+That's it. The manager runs a canary check, picks two roles, dispatches jobs to the workers, and starts filling `packs/<active>/output/` with content.
 
 ### Or with `make` (macOS/Linux convenience)
 
@@ -49,7 +49,7 @@ manager: PICK ROLES → researcher, synthesizer
 worker:  agent[<provider>:<model>] exit=0 duration=...s
 ```
 
-Files appear under `projects/example-project/`. If you set the Ollama provider, the worker line reads `agent[ollama:...]` and not a single Claude call is made.
+Files appear under `packs/<active>/output/`. If you set the Ollama provider, the worker line reads `agent[ollama:...]` and not a single Claude call is made.
 
 ## The three moving parts
 
@@ -68,7 +68,7 @@ The orchestrator is the manager container plus the files in `orchestrator/`. Its
 Per tick (default every 15 minutes) the orchestrator does these things in order.
 
 1. Run the canary
-2. Read `orchestrator/WORKER_ROLES.md` and auto-discover every role defined there
+2. Read the active pack's `ROLES.md` and auto-discover every role defined there
 3. Count how many times each role appears in `orchestrator/ANTI_LOOP_LEDGER.md` and prefer the ones with the lowest count, which naturally biases the fleet toward underrepresented work
 4. Build a small JSON envelope per role and LPUSH it onto a Redis queue
 5. Wait for the workers to push results back
@@ -83,7 +83,7 @@ The orchestrator never calls Claude itself. That keeps your token spend proporti
 Each worker container does the same simple loop forever.
 
 1. Block on `BRPOP fleet:jobs` waiting for an envelope
-2. When one arrives, build a long prompt that includes the role brief from `WORKER_ROLES.md`, the project's targets from `PROJECT_TARGETS.md`, and the recent tail of the anti-loop ledger so the worker knows what is already done
+2. When one arrives, build a long prompt that includes the role brief from `ROLES.md`, the pack's targets from `TARGETS.md`, and the recent tail of the anti-loop ledger so the worker knows what is already done
 3. Spawn a headless `claude --print` with that prompt
 4. After Claude exits, count how many new files appeared in the workspace via a `find` diff
 5. LPUSH a result envelope back to Redis so the manager can collect it
@@ -91,7 +91,7 @@ Each worker container does the same simple loop forever.
 
 Workers write straight to the bind-mounted workspace, so anything Claude produces lands on the host filesystem in real time. The manager picks it up at the end of the fire and commits it.
 
-**A note on `--dangerously-skip-permissions`:** Claude CLI requires this flag to run non-interactively — it cannot be removed. The blast radius is limited structurally: `orchestrator/` is mounted read-only inside every worker container, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoint scripts. Workers can only write to `projects/<name>/` and their own temp files.
+**A note on `--dangerously-skip-permissions`:** Claude CLI requires this flag to run non-interactively — it cannot be removed. The blast radius is limited structurally: `orchestrator/` is mounted read-only inside every worker container, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoint scripts. Workers can only write to `packs/<name>/` and their own temp files.
 
 ## Choosing your LLM provider
 
@@ -139,27 +139,27 @@ This skeleton is generic on purpose. You can wire it up to do almost anything bu
 
 ### Phase 1, gather information
 
-Your first role is a researcher. It reads `PROJECT_TARGETS.md`, picks one target that is not yet in the anti-loop ledger, does the legwork (web search, document fetching, code inspection), and writes one structured findings file under `projects/<project>/findings/`. Run this phase until the findings directory is dense.
+Your first role is a researcher. It reads `TARGETS.md`, picks one target that is not yet in the anti-loop ledger, does the legwork (web search, document fetching, code inspection), and writes one structured findings file under `packs/<pack>/output/findings/`. Run this phase until the findings directory is dense.
 
 The skeleton ships with a `researcher` role you can use as is or modify.
 
 ### Phase 2, develop solutions
 
-Your second role is a synthesizer or solution architect. It reads what the researcher produced, looks across multiple findings for patterns, and writes proposal documents under `projects/<project>/solutions/`. Each solution document references the findings it draws from, explains the problem it solves, and outlines the design.
+Your second role is a synthesizer or solution architect. It reads what the researcher produced, looks across multiple findings for patterns, and writes proposal documents under `packs/<pack>/output/solutions/`. Each solution document references the findings it draws from, explains the problem it solves, and outlines the design.
 
 The skeleton ships with a `synthesizer` role as a starting point. Rename or rewrite the brief to focus on producing solution proposals rather than generic syntheses.
 
 ### Phase 3, implement those solutions
 
-Your third role is an implementer. It reads a solution document, scaffolds the actual code or configuration or content the solution describes, and writes it under `projects/<project>/implementations/`. This is where the fleet stops talking about the problem and starts producing the artifact that solves it.
+Your third role is an implementer. It reads a solution document, scaffolds the actual code or configuration or content the solution describes, and writes it under `packs/<pack>/output/implementations/`. This is where the fleet stops talking about the problem and starts producing the artifact that solves it.
 
-The implementer role is not in the skeleton yet because what counts as an implementation depends on what you are building. Add it to `WORKER_ROLES.md` with a clear brief and the manager will auto-pick it up on the next fire.
+The implementer role is not in the skeleton yet because what counts as an implementation depends on what you are building. Add it to `ROLES.md` with a clear brief and the manager will auto-pick it up on the next fire.
 
 ### Why three phases works
 
 Each phase produces stable input for the next. Researcher writes a findings file, synthesizer reads it, synthesizer writes a solution file, implementer reads it. The anti-loop ledger keeps any phase from re-doing work that was already done. The supervisor halts the fleet if any phase stops producing breadth, which is your early warning that you have either run out of targets or your role briefs need tightening.
 
-You can run all three phases in parallel within one fleet by listing all three roles in `WORKER_ROLES.md`. The orchestrator will rotate through them, biased toward whichever phase has the fewest entries in the ledger. Early on this means lots of phase 1. Once findings stack up the rotation naturally tilts toward phase 2. Once solutions exist the rotation naturally tilts toward phase 3. The fleet self-balances without you having to schedule anything.
+You can run all three phases in parallel within one fleet by listing all three roles in `ROLES.md`. The orchestrator will rotate through them, biased toward whichever phase has the fewest entries in the ledger. Early on this means lots of phase 1. Once findings stack up the rotation naturally tilts toward phase 2. Once solutions exist the rotation naturally tilts toward phase 3. The fleet self-balances without you having to schedule anything.
 
 ## How the supervisor catches problems
 
@@ -175,18 +175,41 @@ When the supervisor writes `STUCK.md` the operator looks at `SUPERVISOR_LOG.json
 
 You can read the full rules in `orchestrator/SUPERVISOR.md`.
 
-## Customizing it
+## Topic packs — make it yours (the plugin system)
 
-Four files cover almost everything.
+The engine is domain-agnostic. Everything topic-specific lives in a **pack** — a drop-in plugin folder under `packs/`:
 
-| File | What you change |
+```
+packs/<topic>/
+  pack.env      config: name, output dir, web-grounding on/off, preferred search domains
+  ROLES.md      specialist roles (each with a **Search:** query + **Output:** dir)
+  TARGETS.md    the domain's sources/targets
+  output/       where workers write (created on first run)
+```
+
+Two ship in the box: `example-research` (generic template) and `web3-security` (a real, filled-in example with web grounding on).
+
+**Make a pack for your own topic in 3 steps:**
+
+```bash
+cp -r packs/example-research packs/my-topic
+# 1. edit packs/my-topic/ROLES.md     — your specialist roles + search queries
+# 2. edit packs/my-topic/TARGETS.md   — your sources
+# 3. set ACTIVE_PACK=my-topic in .env, then: docker compose up -d --build
+```
+
+Swap `ACTIVE_PACK` and the entire fleet retargets — same orchestrator, workers, manager, Redis cache, provider adapters, and web grounding, pointed at a brand-new domain. That's the whole plugin model.
+
+## Other knobs
+
+| Setting | What it does |
 |---|---|
-| `orchestrator/NORTH_STAR.json` | The actual goal of your fleet. One sentence in the `mission` field plus a list of current gaps. |
-| `orchestrator/WORKER_ROLES.md` | The roles. Add an H2 heading per role with mission, sources, per-run output, quality bar. The manager auto-discovers them. |
-| `projects/<name>/PROJECT_TARGETS.md` | The inputs each role consumes. This is where you put your actual research targets, files to refactor, problems to solve, whatever. |
-| `.env` | Tick interval, fleet size, model selection, push behavior. |
-
-To run multiple parallel projects, copy `projects/example-project/` to a new name, drop in fresh targets, and set `ACTIVE_PROJECT=<your-name>` in `.env`.
+| `.env` `ACTIVE_PACK` | Which topic pack the fleet runs. |
+| `.env` `AGENT_PROVIDER` / `AGENT_FALLBACK` | Engine (claude / ollama) + auto-fallback. |
+| pack `pack.env` `WEB_GROUNDING` | Turn the cached SearXNG web-research step on/off for that pack. |
+| pack `pack.env` `SEARCH_PREFERRED_DOMAINS` | High-authority sources to rank first for your topic. |
+| `.env` `CACHE_TTL` / `REDIS_MAXMEMORY` | Research cache lifetime + size (volatile-lru eviction). |
+| `orchestrator/NORTH_STAR.json` | The fleet's stated goal (read by the supervisor). |
 
 ## Troubleshooting
 
@@ -207,7 +230,7 @@ manager  ── LPUSH job ──>  redis  <── BRPOP ── worker N
 manager  <── BRPOP result ── redis  <── LPUSH ── worker N
                                             │
                                             ↓
-                                  writes files into ./projects/<name>/
+                                  writes files into ./packs/<name>/
                                             │
                                             ↓
                             manager commits + optionally pushes

@@ -19,7 +19,8 @@ REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 JOB_QUEUE="${JOB_QUEUE:-fleet:jobs}"
 RESULT_QUEUE="${RESULT_QUEUE:-fleet:results}"
 WORKER_TIMEOUT_MINUTES="${WORKER_TIMEOUT_MINUTES:-25}"
-ACTIVE_PROJECT="${ACTIVE_PROJECT:-example-project}"
+ACTIVE_PACK="${ACTIVE_PACK:-example-research}"
+PACK_DIR="packs/${ACTIVE_PACK}"
 BRANCH="${BRANCH:-main}"
 AUTO_PUSH="${AGENT_AUTO_PUSH:-false}"
 ORCH_DIR="orchestrator"
@@ -59,7 +60,7 @@ git config --global --add safe.directory '*'        2>/dev/null || true
 git config --global user.name  "${GIT_AUTHOR_NAME:-fleet manager}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-manager@fleet.local}"
 
-log "boot: tick=${TICK_INTERVAL_MINUTES}m size=$FLEET_SIZE redis=$REDIS_URL project=$ACTIVE_PROJECT"
+log "boot: tick=${TICK_INTERVAL_MINUTES}m size=$FLEET_SIZE redis=$REDIS_URL pack=$ACTIVE_PACK"
 
 # SSH key perm fix — Windows bind mounts come through 0755 which OpenSSH rejects.
 if [ -d "$HOME/.ssh" ]; then
@@ -94,9 +95,9 @@ done
 
 mkdir -p "$ORCH_DIR/WORKER_REPORTS"
 
-# Discover roles from WORKER_ROLES.md. Each role section starts with `## <name>`.
+# Discover roles from the active pack's ROLES.md (`## <name>` headings).
 discover_roles() {
-  grep -oE '^## [a-z][a-z0-9-]+' "${ORCH_DIR}/WORKER_ROLES.md" 2>/dev/null \
+  grep -oE '^## [a-z][a-z0-9-]+' "${PACK_DIR}/ROLES.md" 2>/dev/null \
     | sed -E 's/^## //'
 }
 
@@ -107,7 +108,7 @@ pick_roles() {
   declare -A counts
   mapfile -t ROLES < <(discover_roles)
   if [ "${#ROLES[@]}" -eq 0 ]; then
-    log "WARN: no roles found in ${ORCH_DIR}/WORKER_ROLES.md"
+    log "WARN: no roles found in ${PACK_DIR}/ROLES.md"
     return 1
   fi
   for role in "${ROLES[@]}"; do
@@ -127,8 +128,8 @@ build_job_json() {
     --arg role "$role" \
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg timeout "$timeout_min" \
-    --arg project "$ACTIVE_PROJECT" \
-    '{fire_id: ($fire_id|tonumber), role: $role, project: $project, dispatched_at: $ts, timeout_minutes: ($timeout|tonumber)}'
+    --arg pack "$ACTIVE_PACK" \
+    '{fire_id: ($fire_id|tonumber), role: $role, pack: $pack, dispatched_at: $ts, timeout_minutes: ($timeout|tonumber)}'
 }
 
 # Canary — verify Claude auth + credits with a cheap Haiku call before the fire.

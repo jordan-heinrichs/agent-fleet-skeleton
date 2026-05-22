@@ -31,7 +31,7 @@ jobs:
           for f in README.md LICENSE .env.example docker-compose.yml \
                    docker/manager/Dockerfile docker/worker/Dockerfile \
                    docker/adapters/dispatch.sh \
-                   orchestrator/WORKER_ROLES.md orchestrator/NORTH_STAR.json; do
+                   packs/example-research/ROLES.md packs/example-research/pack.env; do
             test -f "$f" && echo "present: $f"
           done
 

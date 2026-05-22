@@ -6,7 +6,7 @@ The brain. Five files plus a log.
 |---|---|
 | `NORTH_STAR.md` | Philosophy. Why this directory exists. Read it once when you set up the fleet, then probably never again. |
 | `NORTH_STAR.json` | Machine-readable goal + coverage state. Workers read it for context. Only the manager writes to it. |
-| `WORKER_ROLES.md` | Per-role briefs. The manager auto-discovers roles by H2 heading. Add or remove roles by editing this file. |
+| `ROLES.md` | Per-role briefs. The manager auto-discovers roles by H2 heading. Add or remove roles by editing this file. |
 | `ANTI_LOOP_LEDGER.md` | Append-only done-list. Workers read it (it ships in their prompt) to avoid repeating work. The manager is the only writer — it appends one line per new file from each worker result, and counts entries per role to drive rotation. Workers cannot write here because `orchestrator/` is mounted read-only in worker containers. |
 | `SUPERVISOR.md` | Stuck-detection rules. The supervisor halts the fleet when polish ratio crosses threshold or zero-file fires accumulate. |
 | `SUPERVISOR_LOG.jsonl` | One JSON line per fire with the supervisor's verdict. Used by `check_stuck` to detect three-fire stalls. |
@@ -23,10 +23,10 @@ The brain. Five files plus a log.
 
 ## How to extend
 
-Add a new role: append an H2 section to `WORKER_ROLES.md` with the standard
+Add a new role: append an H2 section to `ROLES.md` with the standard
 shape. The manager picks it up on the next fire without restarting.
 
-Add a new project: create `projects/<name>/PROJECT_TARGETS.md` and set
-`ACTIVE_PROJECT=<name>` in `.env`. Rebuild manager+workers.
+Add a new project: create `packs/<name>/TARGETS.md` and set
+`ACTIVE_PACK=<name>` in `.env`. Rebuild manager+workers.
 
 Change the goal: edit `NORTH_STAR.json`. Next fire reflects it.

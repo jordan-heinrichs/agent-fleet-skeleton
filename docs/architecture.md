@@ -26,14 +26,14 @@
                 │                             │
                 │ orchestrator/               │
                 │   NORTH_STAR.{md,json}      │
-                │   WORKER_ROLES.md           │
+                │   ROLES.md           │
                 │   ANTI_LOOP_LEDGER.md       │
                 │   SUPERVISOR.md             │
                 │   SUPERVISOR_LOG.jsonl      │
                 │   WORKER_REPORTS/           │
                 │                             │
-                │ projects/<active>/          │
-                │   PROJECT_TARGETS.md        │
+                │ packs/<active>/output/          │
+                │   TARGETS.md        │
                 │   findings/    (worker out) │
                 │   synthesis/   (worker out) │
                 └─────────────────────────────┘
@@ -45,7 +45,7 @@
    the Haiku model. If the canary fails (network down, rate-limited, auth
    broken), the manager sleeps `PAUSE_BASE_MINUTES` (default 30) and retries.
 2. **Manager** discovers available roles by grepping `## <name>` headings in
-   `orchestrator/WORKER_ROLES.md`. It counts `← <role>` entries in
+   `the pack ROLES.md`. It counts `← <role>` entries in
    `ANTI_LOOP_LEDGER.md` per role, sorts ascending, and picks the lowest
    `FLEET_SIZE` count roles.
 3. **Manager** drains the result queue (atomic Redis `DEL`) then LPUSHes one

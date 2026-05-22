@@ -8,9 +8,20 @@ REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 JOB_QUEUE="${JOB_QUEUE:-fleet:jobs}"
 RESULT_QUEUE="${RESULT_QUEUE:-fleet:results}"
 CLAUDE_MAX_MINUTES="${CLAUDE_MAX_MINUTES:-20}"
-ACTIVE_PROJECT="${ACTIVE_PROJECT:-example-project}"
 WORKER_ID="${HOSTNAME:-worker-?}"
 PAUSE_BASE_MINUTES="${PAUSE_BASE_MINUTES:-30}"
+
+# ── Active pack (the topic plugin) ───────────────────────────────────────────
+# A pack is a self-contained domain: packs/<name>/{pack.env,ROLES.md,TARGETS.md}.
+# Swap ACTIVE_PACK to retarget the whole fleet without touching the engine.
+ACTIVE_PACK="${ACTIVE_PACK:-example-research}"
+PACK_DIR="packs/${ACTIVE_PACK}"
+# Pack defaults — overridden by the pack's pack.env (sourced after cd below).
+PACK_NAME="$ACTIVE_PACK"
+WEB_GROUNDING="false"
+OUTPUT_DIR="output"
+SEARCH_PREFERRED_DOMAINS=""
+SEARCH_BLOCK_DOMAINS=""
 
 # ── Provider selection ──────────────────────────────────────────────────────
 # AGENT_PROVIDER picks the primary provider (claude | ollama | ...).
@@ -33,6 +44,14 @@ log()   { printf '[%s %s] %s\n' "$WORKER_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$
 redis() { redis-cli -u "$REDIS_URL" "$@"; }
 
 cd "$WORKDIR" || { log "FATAL: cannot cd to $WORKDIR"; exit 1; }
+
+# Load the active pack's config (web grounding, output dir, search prefs).
+if [ -f "${PACK_DIR}/pack.env" ]; then
+  # shellcheck source=/dev/null
+  . "${PACK_DIR}/pack.env"
+fi
+export SEARCH_PREFERRED_DOMAINS SEARCH_BLOCK_DOMAINS
+
 git config --global --add safe.directory "$WORKDIR" 2>/dev/null || true
 git config --global --add safe.directory '*' 2>/dev/null || true
 git config --global user.name  "fleet ${WORKER_ID}"
@@ -58,9 +77,9 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 
-log "boot: provider=$AGENT_PROVIDER model=$MODEL fallback=${AGENT_FALLBACK:-none} max=${CLAUDE_MAX_MINUTES}m project=$ACTIVE_PROJECT"
+log "boot: pack=$ACTIVE_PACK provider=$AGENT_PROVIDER model=$MODEL fallback=${AGENT_FALLBACK:-none} grounding=$WEB_GROUNDING max=${CLAUDE_MAX_MINUTES}m"
 
-# Extract a role brief from WORKER_ROLES.md by H2 heading match.
+# Extract a role's full section from the active pack's ROLES.md (H2 match).
 extract_role_brief() {
   local role="$1"
   awk -v r="$role" '
@@ -71,66 +90,83 @@ extract_role_brief() {
       else if (capture) { exit }
     }
     capture { print }
-  ' orchestrator/WORKER_ROLES.md
+  ' "${PACK_DIR}/ROLES.md"
 }
 
-# Build the worker prompt — embeds role brief + project targets + ledger tail.
+# Per-role machine-read fields from the role's section.
+role_field() {  # role field-label
+  extract_role_brief "$1" | grep -m1 -iE "^\\*\\*${2}:\\*\\*" | sed -E "s/^\\*\\*${2}:\\*\\*[[:space:]]*//I"
+}
+role_search() { role_field "$1" "Search"; }
+role_output() {
+  local o; o=$(role_field "$1" "Output")
+  [ -z "$o" ] && o="$1"            # default subdir = role name
+  printf '%s' "$o"
+}
+
+# Build the worker prompt — role brief + pack targets + ledger + (optional)
+# live web sources from the cached research step.
 build_prompt() {
-  local role="$1" fire_id="$2" project="$3"
-  local tmp
+  local role="$1" fire_id="$2"
+  local tmp brief targets ledger_tail out_sub web_context query
   tmp=$(mktemp /tmp/fleet-prompt-XXXXXX.md)
-  local brief project_targets ledger_tail
   brief=$(extract_role_brief "$role")
-  project_targets=$(cat "projects/${project}/PROJECT_TARGETS.md" 2>/dev/null || echo "(no targets file found)")
-  ledger_tail=$(tail -60 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null || echo "(empty ledger)")
-  # Strip any line that doesn't match the canonical ledger format before
-  # embedding — prevents injected instructions in the ledger from reaching
-  # subsequent worker prompts.
-  ledger_tail_safe=$(printf '%s\n' "$ledger_tail" \
-    | grep -E '^- .+ ← [a-z-]+ \(fire #[0-9]+\)$' \
-    || echo "(empty ledger)")
+  targets=$(cat "${PACK_DIR}/TARGETS.md" 2>/dev/null || echo "(no TARGETS.md in pack)")
+  out_sub=$(role_output "$role")
+  ledger_tail=$(tail -80 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null \
+    | grep -E '^- .+ ← [a-z-]+ \(fire #[0-9]+\)$' || echo "(empty ledger)")
+
+  # Optional web grounding: fetch real sources for the role's search query.
+  web_context=""
+  if [ "$WEB_GROUNDING" = "true" ]; then
+    query=$(role_search "$role"); [ -z "$query" ] && query="$role research 2025"
+    log "research: '$query' (grounding on, cache active)"
+    web_context=$(timeout 150 python3 /usr/local/bin/research.py "$query" "${RESEARCH_RESULTS:-6}" 2>/dev/null)
+    [ -z "$web_context" ] && web_context="(web research returned nothing — do not invent sources)"
+    web_context="═══════════════════════════════════════════════════════════════════════
+LIVE WEB SOURCES (real, fetched just now — cite ONLY these URLs)
+═══════════════════════════════════════════════════════════════════════
+
+${web_context}
+"
+  fi
 
   cat > "$tmp" <<PROMPT
 You are a worker in an autonomous agent fleet (fire #${fire_id}).
-
-YOUR ROLE: ${role}
-YOUR PROJECT: ${project}
-WORKDIR: /workspace
+Pack: ${PACK_NAME}.  Role: ${role}.  WORKDIR: /workspace
 
 ═══════════════════════════════════════════════════════════════════════
-YOUR ROLE BRIEF (from orchestrator/WORKER_ROLES.md)
+YOUR ROLE BRIEF (from ${PACK_DIR}/ROLES.md)
 ═══════════════════════════════════════════════════════════════════════
 
 ${brief}
 
-═══════════════════════════════════════════════════════════════════════
-PROJECT TARGETS (from projects/${project}/PROJECT_TARGETS.md)
-═══════════════════════════════════════════════════════════════════════
-
-${project_targets}
-
-═══════════════════════════════════════════════════════════════════════
-ANTI-LOOP LEDGER TAIL (last 60 lines — DO NOT duplicate)
+${web_context}═══════════════════════════════════════════════════════════════════════
+TARGETS (from ${PACK_DIR}/TARGETS.md)
 ═══════════════════════════════════════════════════════════════════════
 
-${ledger_tail_safe}
+${targets}
+
+═══════════════════════════════════════════════════════════════════════
+ALREADY COVERED — do NOT duplicate
+═══════════════════════════════════════════════════════════════════════
+
+${ledger_tail}
 
 ═══════════════════════════════════════════════════════════════════════
 TASK
 ═══════════════════════════════════════════════════════════════════════
 
-1. Pick a target from PROJECT_TARGETS.md that is NOT in the anti-loop
-   ledger above.
-2. Do the work described in YOUR ROLE BRIEF. Write outputs into the
-   project directory (projects/${project}/).
-3. End your response with a single JSON line summarizing what you did:
+1. Pick a specific target NOT in the "already covered" list.
+2. Do the work in YOUR ROLE BRIEF. ${WEB_GROUNDING:+Use ONLY facts and URLs from the LIVE WEB SOURCES above; do not invent sources.}
+3. Write your output file(s) under: ${PACK_DIR}/${OUTPUT_DIR}/${out_sub}/
+4. End your response with one JSON line:
    {"role":"${role}","fire_id":${fire_id},"files_written":N,"targets_aborted":N}
 
 CONSTRAINTS:
-- The orchestrator/ directory is READ-ONLY for you. The fleet manager
-  records your new files in the anti-loop ledger automatically — you do
-  not need to (and cannot) write there.
-- Do NOT modify files outside projects/${project}/.
+- orchestrator/ is READ-ONLY. The manager records the anti-loop ledger; you
+  do not (and cannot) write there.
+- Write only under ${PACK_DIR}/${OUTPUT_DIR}/.
 - Do NOT commit or push (manager handles git).
 
 GO. You have ${CLAUDE_MAX_MINUTES} minutes.
@@ -189,22 +225,22 @@ while true; do
 
   role=$(printf '%s' "$job" | jq -r '.role // empty')
   fire_id=$(printf '%s' "$job" | jq -r '.fire_id // 0')
-  project=$(printf '%s' "$job" | jq -r '.project // empty')
   job_timeout=$(printf '%s' "$job" | jq -r '.timeout_minutes // empty')
-  if [ -z "$role" ] || [ -z "$fire_id" ] || [ -z "$project" ]; then
+  if [ -z "$role" ] || [ -z "$fire_id" ]; then
     log "WARN: malformed job, dropping: $job"
     continue
   fi
   [ -n "$job_timeout" ] && [ "$job_timeout" -gt 0 ] 2>/dev/null && CLAUDE_MAX_MINUTES="$job_timeout"
 
-  log "JOB: role=$role fire=$fire_id project=$project timeout=${CLAUDE_MAX_MINUTES}m"
+  log "JOB: role=$role fire=$fire_id pack=$ACTIVE_PACK timeout=${CLAUDE_MAX_MINUTES}m"
 
   # Fetch, no reset — sibling workers may be writing in parallel.
   git fetch --all --prune 2>/dev/null || true
+  mkdir -p "${PACK_DIR}/${OUTPUT_DIR}/$(role_output "$role")" 2>/dev/null || true
 
   PRE_FILES=$(find . -name '*.md' -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null | sort)
 
-  prompt_file=$(build_prompt "$role" "$fire_id" "$project")
+  prompt_file=$(build_prompt "$role" "$fire_id")
   log "prompt built: $prompt_file ($(wc -l < "$prompt_file") lines)"
 
   # ── Run the agent: primary provider, with one-shot fallback ─────────────

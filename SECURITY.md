@@ -26,7 +26,7 @@ allows.
   injected instruction in the ledger from propagating into subsequent worker
   prompts. (Finding C-02.)
 
-- **Workers can only write to `projects/<active>/`** and their own temp files.
+- **Workers can only write to `packs/<active>/output/`** and their own temp files.
 
 - **The canary uses a cheap model and a short timeout**, so a broken or
   hostile auth state is detected before a full fire's worth of tokens is
@@ -35,7 +35,7 @@ allows.
 ## What is NOT hardened (know before you scale)
 
 - The bind mount maps your real repo into the containers. A worker can write
-  anywhere under `projects/`. If you point the fleet at a sensitive
+  anywhere under the pack output dir. If you point the fleet at a sensitive
   repository, scope the mount accordingly.
 - The fleet mounts your host `~/.claude` credentials. Anyone who can exec
   into a worker container can read them. Run this on a machine you trust.

@@ -19,12 +19,20 @@ services:
     image: redis:7-alpine
     container_name: fleet-redis
     restart: unless-stopped
+    # Doubles as the job/result queue AND the research cache.
+    # volatile-lru: when memory fills, evict only keys that HAVE a TTL (the
+    # cache entries) — queue keys have no TTL and are protected. That's the
+    # "keep hot, shed stale" behavior without ever dropping live work.
     command:
       - redis-server
       - --save
       - ""
       - --appendonly
       - "no"
+      - --maxmemory
+      - "${REDIS_MAXMEMORY:-1gb}"
+      - --maxmemory-policy
+      - "volatile-lru"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -57,7 +65,7 @@ services:
       CANARY_MODEL: "${CANARY_MODEL:-claude-haiku-4-5-20251001}"
       FALLBACK_CANARY_MODEL: "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
       OLLAMA_API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
-      ACTIVE_PROJECT: "${ACTIVE_PROJECT:-example-project}"
+      ACTIVE_PACK: "${ACTIVE_PACK:-example-research}"
       REDIS_URL: "redis://redis:6379"
       JOB_QUEUE: "fleet:jobs"
       RESULT_QUEUE: "fleet:results"
@@ -112,7 +120,10 @@ services:
       AGENT_FALLBACK: "${AGENT_FALLBACK:-}"
       FALLBACK_MODEL: "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
       OLLAMA_API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
-      ACTIVE_PROJECT: "${ACTIVE_PROJECT:-example-project}"
+      ACTIVE_PACK: "${ACTIVE_PACK:-example-research}"
+      SEARXNG_URL: "${SEARXNG_URL:-http://searxng:8080}"
+      CACHE_TTL: "${CACHE_TTL:-86400}"
+      OLLAMA_NUM_CTX: "${OLLAMA_NUM_CTX:-16384}"
     # Lets the worker reach a host-run Ollama at host.docker.internal.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -137,3 +148,17 @@ services:
         read_only: true
     deploy:
       replicas: ${FLEET_SIZE:-2}
+
+  # Optional web-grounding search engine. Only starts with:
+  #   docker compose --profile grounding up -d --build
+  # Enable per-pack via WEB_GROUNDING=true in the pack's pack.env.
+  # Free, self-hosted, no API key. Workers query it at http://searxng:8080.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: fleet-searxng
+    restart: unless-stopped
+    profiles: ["grounding"]
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: "http://searxng:8080/"
