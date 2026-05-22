@@ -19,7 +19,6 @@ REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 JOB_QUEUE="${JOB_QUEUE:-fleet:jobs}"
 RESULT_QUEUE="${RESULT_QUEUE:-fleet:results}"
 WORKER_TIMEOUT_MINUTES="${WORKER_TIMEOUT_MINUTES:-25}"
-CANARY_MODEL="${CANARY_MODEL:-claude-haiku-4-5-20251001}"
 ACTIVE_PROJECT="${ACTIVE_PROJECT:-example-project}"
 BRANCH="${BRANCH:-main}"
 AUTO_PUSH="${AGENT_AUTO_PUSH:-false}"
@@ -30,9 +29,20 @@ SUPERVISOR_LOG="${ORCH_DIR}/SUPERVISOR_LOG.jsonl"
 STUCK_FILE="${ORCH_DIR}/STUCK.md"
 PAUSE_BASE_MINUTES="${PAUSE_BASE_MINUTES:-30}"
 
-# Exhaustion regex — tightly anchored to Anthropic API context so generic
-# words like "rate limit" in project content can't false-positive.
-EXHAUSTION_REGEX='anthropic[^"]{0,40}(rate.?limit|quota|insufficient|credit|billing)|claude[-_]?(api|code)[^"]{0,40}(rate.?limit|quota|insufficient|credit|billing)|"type"[^"]*"(rate_limit_error|overloaded_error|authentication_error|permission_error|insufficient_credit|billing_error)"|HTTP\/[12](\.[01])?[[:space:]]+429[^0-9]|status[[:space:]]+(code[[:space:]]+)?429[^0-9]|insufficient_balance|credit balance (too low|exhausted|depleted)|max[-_ ]?plan.{0,40}(limit|exceeded|expired)|exceeded your (monthly|daily|current) quota'
+# ── Provider selection (mirrors the worker) ─────────────────────────────────
+# The manager canaries the primary provider before each fire. If the primary
+# canary fails but a fallback is configured, it proceeds anyway — the workers
+# will fall back per-job. CANARY_MODEL is the cheap model used for the ping
+# (e.g. Haiku for Claude; for Ollama the canary just hits the local server).
+AGENT_PROVIDER="${AGENT_PROVIDER:-claude}"
+AGENT_FALLBACK="${AGENT_FALLBACK:-}"
+CANARY_MODEL="${CANARY_MODEL:-claude-haiku-4-5-20251001}"
+FALLBACK_CANARY_MODEL="${FALLBACK_CANARY_MODEL:-qwen2.5-coder:14b}"
+
+# Adapters provide run_canary / exhaustion_regex per provider.
+ADAPTER_DIR="${ADAPTER_DIR:-/usr/local/bin/adapters}"
+# shellcheck source=/dev/null
+. "${ADAPTER_DIR}/dispatch.sh"
 
 # Logs to STDERR so functions used inside $(...) don't pollute captured stdout.
 log()    { printf '[manager %s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
@@ -122,23 +132,42 @@ build_job_json() {
 }
 
 # Canary — verify Claude auth + credits with a cheap Haiku call before the fire.
-canary_check() {
-  local tick="$1"
-  local canary_log="${ORCH_DIR}/last-canary.log"
-  log "canary: pinging $CANARY_MODEL (2m timeout)..."
-  timeout 2m claude --dangerously-skip-permissions --model "$CANARY_MODEL" --print "respond with OK" \
-    > "$canary_log" 2>&1
+# Canary one provider via its adapter. Returns 0 if healthy.
+canary_one() {
+  local provider="$1" model="$2" canary_log="$3"
+  log "canary: pinging $provider:$model ..."
+  provider_run_canary "$provider" "$model" "$canary_log"
   local exit_code=$?
   if [ "$exit_code" -ne 0 ]; then
-    log "canary FAILED: exit=$exit_code (see $canary_log)"
+    log "canary FAILED: $provider exit=$exit_code (see $canary_log)"
     return 1
   fi
-  if grep -qiE "$EXHAUSTION_REGEX" "$canary_log" 2>/dev/null; then
-    log "canary: exhaustion signal in response"
+  local rx; rx="$(provider_exhaustion_regex "$provider")"
+  if [ -n "$rx" ] && grep -qiE "$rx" "$canary_log" 2>/dev/null; then
+    log "canary: $provider exhaustion signal in response"
     return 1
   fi
-  log "canary: OK"
+  log "canary: $provider OK"
   return 0
+}
+
+# Canary the primary provider. If it fails but a fallback is configured, canary
+# the fallback — a healthy fallback is enough to dispatch the fire (workers
+# fall back per-job). Only a total wipeout (primary down, no working fallback)
+# blocks the fire.
+canary_check() {
+  local tick="$1"
+  if canary_one "$AGENT_PROVIDER" "$CANARY_MODEL" "${ORCH_DIR}/last-canary.log"; then
+    return 0
+  fi
+  if [ -n "$AGENT_FALLBACK" ]; then
+    log "canary: primary ($AGENT_PROVIDER) down — checking fallback $AGENT_FALLBACK"
+    if canary_one "$AGENT_FALLBACK" "$FALLBACK_CANARY_MODEL" "${ORCH_DIR}/last-canary-fallback.log"; then
+      log "canary: fallback healthy — dispatching (workers will fall back per-job)"
+      return 0
+    fi
+  fi
+  return 1
 }
 
 # Backoff helper.

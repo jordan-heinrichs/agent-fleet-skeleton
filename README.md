@@ -68,6 +68,46 @@ Workers write straight to the bind-mounted workspace, so anything Claude produce
 
 **A note on `--dangerously-skip-permissions`:** Claude CLI requires this flag to run non-interactively — it cannot be removed. The blast radius is limited structurally: `orchestrator/` is mounted read-only inside every worker container, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoint scripts. Workers can only write to `projects/<name>/` and their own temp files.
 
+## Choosing your LLM provider
+
+The fleet is model-agnostic. The engine (canary, ledger, supervisor, rotation, Redis bus) never changes; only the leaf call that runs the agent swaps behind an adapter. Two providers ship in the box.
+
+| Provider | Cost | Quality | Notes |
+|---|---|---|---|
+| `claude` | $0 per token on Claude Max (flat subscription) | highest | Default. Rides your mounted `~/.claude` OAuth session. Rate-limited by the Max usage window. |
+| `ollama` | $0 forever, no subscription | scales with your GPU | Local models via Aider. Install Ollama on the host and `ollama pull <model>` first. No rate window. |
+
+Set the provider in `.env`:
+
+```bash
+# pure local, zero cost
+AGENT_PROVIDER=ollama
+AGENT_MODEL=qwen2.5-coder:14b
+```
+
+### The fallback switch (so the fleet never stops)
+
+The most useful setup is Claude for quality with a local fallback. When Claude Max hits its cooldown window, the worker retries the same job on Ollama instead of sleeping — so the fleet keeps producing on your own hardware until Max comes back.
+
+```bash
+AGENT_PROVIDER=claude
+AGENT_MODEL=claude-sonnet-4-7
+AGENT_FALLBACK=ollama
+FALLBACK_MODEL=qwen2.5-coder:14b
+```
+
+In the worker logs you'll see the handoff:
+
+```
+agent[claude:claude-sonnet-4-7] exit=1 duration=9s
+primary (claude) walled — falling back to ollama:qwen2.5-coder:14b
+agent[ollama:qwen2.5-coder:14b] exit=0 duration=210s
+```
+
+### Adding another provider
+
+Drop a `docker/adapters/<name>.sh` defining `<name>_run_agent`, `<name>_run_canary`, and `<name>_exhaustion_regex`. The dispatcher auto-discovers it — no registration. An Aider-backed adapter can route to GPT, Gemini, or DeepSeek with the same shape.
+
 ## The three-phase workflow
 
 This skeleton is generic on purpose. You can wire it up to do almost anything but the most productive pattern in practice is a three-phase pipeline. Each phase is a worker role you define.

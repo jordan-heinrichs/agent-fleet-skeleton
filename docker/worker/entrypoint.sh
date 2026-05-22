@@ -8,12 +8,26 @@ REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 JOB_QUEUE="${JOB_QUEUE:-fleet:jobs}"
 RESULT_QUEUE="${RESULT_QUEUE:-fleet:results}"
 CLAUDE_MAX_MINUTES="${CLAUDE_MAX_MINUTES:-20}"
-MODEL="${AGENT_MODEL:-claude-sonnet-4-7}"
 ACTIVE_PROJECT="${ACTIVE_PROJECT:-example-project}"
 WORKER_ID="${HOSTNAME:-worker-?}"
 PAUSE_BASE_MINUTES="${PAUSE_BASE_MINUTES:-30}"
 
-EXHAUSTION_REGEX='anthropic[^"]{0,40}(rate.?limit|quota|insufficient|credit|billing)|claude[-_]?(api|code)[^"]{0,40}(rate.?limit|quota|insufficient|credit|billing)|"type"[^"]*"(rate_limit_error|overloaded_error|authentication_error|permission_error|insufficient_credit|billing_error)"|HTTP\/[12](\.[01])?[[:space:]]+429[^0-9]|status[[:space:]]+(code[[:space:]]+)?429[^0-9]|insufficient_balance|credit balance (too low|exhausted|depleted)|max[-_ ]?plan.{0,40}(limit|exceeded|expired)|exceeded your (monthly|daily|current) quota'
+# ── Provider selection ──────────────────────────────────────────────────────
+# AGENT_PROVIDER picks the primary provider (claude | ollama | ...).
+# AGENT_MODEL is that provider's model string.
+# AGENT_FALLBACK (optional) is a second provider tried once per job if the
+# primary hits a wall (rate-limit / quota / fast-fail). Set it to ollama so the
+# fleet never stops when Claude Max is in its cooldown window.
+# FALLBACK_MODEL is the fallback provider's model string.
+AGENT_PROVIDER="${AGENT_PROVIDER:-claude}"
+MODEL="${AGENT_MODEL:-claude-sonnet-4-7}"
+AGENT_FALLBACK="${AGENT_FALLBACK:-}"
+FALLBACK_MODEL="${FALLBACK_MODEL:-qwen2.5-coder:14b}"
+
+# Adapters provide run_agent / run_canary / exhaustion_regex per provider.
+ADAPTER_DIR="${ADAPTER_DIR:-/usr/local/bin/adapters}"
+# shellcheck source=/dev/null
+. "${ADAPTER_DIR}/dispatch.sh"
 
 log()   { printf '[%s %s] %s\n' "$WORKER_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 redis() { redis-cli -u "$REDIS_URL" "$@"; }
@@ -44,7 +58,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 
-log "boot: model=$MODEL max=${CLAUDE_MAX_MINUTES}m project=$ACTIVE_PROJECT queue=$JOB_QUEUE"
+log "boot: provider=$AGENT_PROVIDER model=$MODEL fallback=${AGENT_FALLBACK:-none} max=${CLAUDE_MAX_MINUTES}m project=$ACTIVE_PROJECT"
 
 # Extract a role brief from WORKER_ROLES.md by H2 heading match.
 extract_role_brief() {
@@ -153,6 +167,16 @@ emit_result() {
   log "result pushed: $payload"
 }
 
+# A provider is "walled" when it hit a rate-limit/quota (its exhaustion regex
+# matches the agent log) OR exited non-zero in under 60s (throttle or bad
+# model string). Reads AGENT_LOG / AGENT_EXIT / DURATION from the loop scope.
+agent_walled() {
+  local rx; rx="$(provider_exhaustion_regex "$1")"
+  [ -n "$rx" ] && grep -qiE "$rx" "$AGENT_LOG" 2>/dev/null && return 0
+  [ "$AGENT_EXIT" -ne 0 ] && [ "$DURATION" -lt 60 ] && return 0
+  return 1
+}
+
 while true; do
   log "BRPOP $JOB_QUEUE ..."
   raw=$(redis BRPOP "$JOB_QUEUE" 0 2>/dev/null || true)
@@ -183,41 +207,45 @@ while true; do
   prompt_file=$(build_prompt "$role" "$fire_id" "$project")
   log "prompt built: $prompt_file ($(wc -l < "$prompt_file") lines)"
 
+  # ── Run the agent: primary provider, with one-shot fallback ─────────────
+  AGENT_LOG=$(mktemp /tmp/fleet-agent-XXXXXX.log)
+  ACTIVE_PROVIDER="$AGENT_PROVIDER"
+  ACTIVE_MODEL="$MODEL"
+
   START_TS=$(date +%s)
-  CLAUDE_LOG=$(mktemp /tmp/fleet-claude-XXXXXX.log)
-  # --dangerously-skip-permissions cannot be removed — Claude CLI requires it
-  # to operate non-interactively. Blast radius is limited by the read-only
-  # bind mount on /workspace/orchestrator in docker-compose.yml: workers
-  # cannot overwrite NORTH_STAR.json, the ledger, or entrypoint scripts.
-  timeout "${CLAUDE_MAX_MINUTES}m" claude \
-    --dangerously-skip-permissions \
-    --model "$MODEL" \
-    --print \
-    "$(cat "$prompt_file")" \
-    > "$CLAUDE_LOG" 2>&1
-  CLAUDE_EXIT=$?
+  provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
+  AGENT_EXIT=$?
   DURATION=$(( $(date +%s) - START_TS ))
-  rm -f "$prompt_file"
-  log "claude exit=$CLAUDE_EXIT duration=${DURATION}s log=$CLAUDE_LOG"
+  log "agent[$ACTIVE_PROVIDER:$ACTIVE_MODEL] exit=$AGENT_EXIT duration=${DURATION}s"
 
-  # Backoff path 1: regex match on known exhaustion signal.
-  if grep -qiE "$EXHAUSTION_REGEX" "$CLAUDE_LOG" 2>/dev/null; then
-    log "TOKEN EXHAUSTION (regex) — sleeping ${PAUSE_BASE_MINUTES}m"
-    emit_result "$role" "$fire_id" "exhausted" "0" "0" "$DURATION" "see claude log"
-    sleep "$((PAUSE_BASE_MINUTES * 60))"
-    rm -f "$CLAUDE_LOG"
-    continue
+  # If the primary walled and a fallback is configured, retry the same job once
+  # on the fallback. This is what keeps the fleet running when Claude Max hits
+  # its cooldown window — work flows to the local Ollama provider instead.
+  if agent_walled "$ACTIVE_PROVIDER" && [ -n "$AGENT_FALLBACK" ]; then
+    log "primary ($ACTIVE_PROVIDER) walled — falling back to ${AGENT_FALLBACK}:${FALLBACK_MODEL}"
+    ACTIVE_PROVIDER="$AGENT_FALLBACK"
+    ACTIVE_MODEL="$FALLBACK_MODEL"
+    START_TS=$(date +%s)
+    provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
+    AGENT_EXIT=$?
+    DURATION=$(( $(date +%s) - START_TS ))
+    log "agent[$ACTIVE_PROVIDER:$ACTIVE_MODEL] exit=$AGENT_EXIT duration=${DURATION}s"
   fi
+  rm -f "$prompt_file"
 
-  # Backoff path 2: fast-fail heuristic. Claude that exits non-zero in <60s
-  # is almost always a Max-plan throttle, even if the error text doesn't
-  # match the regex above. Sleep rather than dispatch into a closed window.
-  if [ "$CLAUDE_EXIT" -ne 0 ] && [ "$DURATION" -lt 60 ]; then
-    log "FAST FAIL (exit=$CLAUDE_EXIT in ${DURATION}s) — sleeping ${PAUSE_BASE_MINUTES}m"
-    SNIPPET=$(head -5 "$CLAUDE_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-200)
-    emit_result "$role" "$fire_id" "fast_fail" "0" "0" "$DURATION" "$SNIPPET"
+  # If the active provider (primary or fallback) still walled, back off.
+  if agent_walled "$ACTIVE_PROVIDER"; then
+    WALL_RX="$(provider_exhaustion_regex "$ACTIVE_PROVIDER")"
+    if [ -n "$WALL_RX" ] && grep -qiE "$WALL_RX" "$AGENT_LOG" 2>/dev/null; then
+      WALL_STATUS="exhausted"
+    else
+      WALL_STATUS="fast_fail"
+    fi
+    log "WALL ($ACTIVE_PROVIDER, $WALL_STATUS) — sleeping ${PAUSE_BASE_MINUTES}m"
+    SNIPPET=$(head -5 "$AGENT_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-200)
+    emit_result "$role" "$fire_id" "$WALL_STATUS" "0" "0" "$DURATION" "$SNIPPET"
     sleep "$((PAUSE_BASE_MINUTES * 60))"
-    rm -f "$CLAUDE_LOG"
+    rm -f "$AGENT_LOG"
     continue
   fi
 
@@ -229,7 +257,7 @@ while true; do
   [ -z "$NEW_COUNT" ] && NEW_COUNT=0
   log "new files written: $NEW_COUNT"
 
-  ABORTS=$(tail -20 "$CLAUDE_LOG" 2>/dev/null \
+  ABORTS=$(tail -20 "$AGENT_LOG" 2>/dev/null \
     | grep -E '"targets_aborted"' \
     | tail -1 \
     | jq -r '.targets_aborted // 0' 2>/dev/null \
@@ -239,7 +267,7 @@ while true; do
   [ -z "$ABORTS" ] && ABORTS=0
 
   STATUS="ok"
-  [ "$CLAUDE_EXIT" -ne 0 ] && STATUS="claude_exit_${CLAUDE_EXIT}"
+  [ "$AGENT_EXIT" -ne 0 ] && STATUS="agent_exit_${AGENT_EXIT}"
   [ "$NEW_COUNT" -eq 0 ] && [ "$STATUS" = "ok" ] && STATUS="no_files_written"
 
   # Package the new-file list as a JSON array so the manager can write the
@@ -249,7 +277,7 @@ while true; do
   [ -z "$NEW_FILES_JSON" ] && NEW_FILES_JSON="[]"
 
   emit_result "$role" "$fire_id" "$STATUS" "$NEW_COUNT" "$ABORTS" "$DURATION" \
-    "$(tail -2 "$CLAUDE_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)" "$NEW_FILES_JSON"
-  rm -f "$CLAUDE_LOG"
+    "$(tail -2 "$AGENT_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)" "$NEW_FILES_JSON"
+  rm -f "$AGENT_LOG"
   log "JOB DONE: role=$role files=$NEW_COUNT"
 done
