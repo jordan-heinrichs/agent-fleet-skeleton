@@ -46,6 +46,14 @@ done
 
 log "boot: model=$MODEL max=${CLAUDE_MAX_MINUTES}m project=$ACTIVE_PROJECT queue=$JOB_QUEUE"
 
+# H-03: Copy ~/.claude to a per-worker private directory so concurrent workers
+# don't collide on OAuth token refresh writes to the shared bind-mounted dir.
+WORKER_CLAUDE_HOME="/tmp/claude-${WORKER_ID}"
+mkdir -p "$WORKER_CLAUDE_HOME/.claude"
+cp -r "$HOME/.claude/." "$WORKER_CLAUDE_HOME/.claude/" 2>/dev/null || true
+[ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$WORKER_CLAUDE_HOME/.claude.json" 2>/dev/null || true
+log "claude home: private copy at $WORKER_CLAUDE_HOME"
+
 # Extract a role brief from WORKER_ROLES.md by H2 heading match.
 extract_role_brief() {
   local role="$1"
@@ -179,16 +187,18 @@ emit_result() {
        extra: $extra,
        ts: (now | todate)
      }')
-  redis LPUSH "$RESULT_QUEUE" "$payload" >/dev/null
+  redis LPUSH "${RESULT_QUEUE}:fire-${fire_id}" "$payload" >/dev/null
   log "result pushed: $payload"
 }
 
 while true; do
-  log "BRPOP $JOB_QUEUE ..."
-  raw=$(redis BRPOP "$JOB_QUEUE" 0 2>/dev/null || true)
-  job=$(printf '%s\n' "$raw" | tail -n +2)
+  log "waiting for job..."
+  # H-02: BLMOVE atomically moves the job into a processing list. If this
+  # worker crashes mid-run the job stays in fleet:jobs-processing and gets
+  # requeued by the manager on next boot. BRPOP would have lost it silently.
+  job=$(redis BLMOVE "$JOB_QUEUE" "${JOB_QUEUE}-processing" RIGHT LEFT 0 2>/dev/null || true)
   if [ -z "$job" ]; then
-    log "WARN: empty BRPOP — sleeping 5s"
+    log "WARN: empty BLMOVE — sleeping 5s"
     sleep 5
     continue
   fi
@@ -199,6 +209,7 @@ while true; do
   job_timeout=$(printf '%s' "$job" | jq -r '.timeout_minutes // empty')
   if [ -z "$role" ] || [ -z "$fire_id" ] || [ -z "$project" ]; then
     log "WARN: malformed job, dropping: $job"
+    redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
     continue
   fi
   [ -n "$job_timeout" ] && [ "$job_timeout" -gt 0 ] 2>/dev/null && CLAUDE_MAX_MINUTES="$job_timeout"
@@ -219,7 +230,7 @@ while true; do
   # to operate non-interactively. Blast radius is limited by the read-only
   # bind mount on /workspace/orchestrator in docker-compose.yml: workers
   # cannot overwrite NORTH_STAR.json, the ledger, or entrypoint scripts.
-  timeout "${CLAUDE_MAX_MINUTES}m" claude \
+  HOME="$WORKER_CLAUDE_HOME" timeout "${CLAUDE_MAX_MINUTES}m" claude \
     --dangerously-skip-permissions \
     --model "$MODEL" \
     --print \
@@ -236,6 +247,7 @@ while true; do
     emit_result "$role" "$fire_id" "exhausted" "0" "0" "$DURATION" "see claude log"
     sleep "$((PAUSE_BASE_MINUTES * 60))"
     rm -f "$CLAUDE_LOG"
+    redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
     continue
   fi
 
@@ -248,6 +260,7 @@ while true; do
     emit_result "$role" "$fire_id" "fast_fail" "0" "0" "$DURATION" "$SNIPPET"
     sleep "$((PAUSE_BASE_MINUTES * 60))"
     rm -f "$CLAUDE_LOG"
+    redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
     continue
   fi
 
@@ -275,5 +288,6 @@ while true; do
   emit_result "$role" "$fire_id" "$STATUS" "$NEW_COUNT" "$ABORTS" "$DURATION" \
     "$(tail -2 "$CLAUDE_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)"
   rm -f "$CLAUDE_LOG"
+  redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
   log "JOB DONE: role=$role files=$NEW_COUNT"
 done

@@ -227,8 +227,9 @@ while true; do
     continue
   fi
 
-  # 3. Drain stale results, enqueue jobs
-  redis DEL "$RESULT_QUEUE" >/dev/null 2>&1 || true
+  # 3. Enqueue jobs. Use a fire-scoped result queue so late results from the
+  # previous fire (H-01) land in their own key and can't be lost by a DEL here.
+  fire_result_queue="${RESULT_QUEUE}:fire-${fire_id}"
   banner "ENQUEUE JOBS"
   for r in "${PICKED_ROLES[@]}"; do
     job=$(build_job_json "$fire_id" "$r" "$WORKER_TIMEOUT_MINUTES")
@@ -247,7 +248,7 @@ while true; do
     REMAINING=$((DEADLINE - NOW))
     [ "$REMAINING" -gt 1800 ] && REMAINING=1800
     [ "$REMAINING" -lt 1 ] && REMAINING=1
-    raw=$(redis BRPOP "$RESULT_QUEUE" "$REMAINING" 2>/dev/null || true)
+    raw=$(redis BRPOP "$fire_result_queue" "$REMAINING" 2>/dev/null || true)
     payload=$(printf '%s\n' "$raw" | tail -n +2)
     [ -z "$payload" ] && { log "WARN: empty BRPOP"; continue; }
     role=$(printf '%s' "$payload" | jq -r '.role // "?"')
@@ -280,6 +281,10 @@ while true; do
   if [ "$AUTO_PUSH" = "true" ]; then
     git push origin "$BRANCH" 2>&1 | sed 's/^/  /' >&2 && log "push OK" || log "WARN: push failed"
   fi
+
+  # Expire the scoped result queue — any stragglers after this point belong to
+  # a dead fire and should not accumulate in Redis indefinitely.
+  redis EXPIRE "$fire_result_queue" 3600 >/dev/null 2>&1 || true
 
   banner "FIRE #${fire_id} END — sleeping ${TICK_INTERVAL_MINUTES}m"
   sleep "$((TICK_INTERVAL_MINUTES * 60))"
