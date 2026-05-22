@@ -7,11 +7,41 @@ A runnable starter for an autonomous agent fleet. One driver, a few horses, and 
 
 Think of it like harnessing AI horses. Each worker is a horse that can pull a heavy load (one focused agent session) but a single horse alone runs in circles. The orchestrator is the driver who decides which horse goes where, the canary is the stable check before you saddle up, and the supervisor is the trainer who pulls a horse off the track when it stops pulling its weight. You provide the goal and the track. The fleet does the running.
 
+## What it is
+
+A small, self-contained system that runs a team of AI agents in a loop, on a schedule, against a goal you define, with no human in the seat between fires. A manager container wakes on a timer, checks that the model is reachable, hands one focused job to each worker, collects what they produce, records it so the next round does not repeat it, and commits the result. Everything topic-specific lives in a drop-in **pack**, so the same engine can research smart-contract bugs today and summarize case law tomorrow by swapping one folder.
+
+It is deliberately small. The whole engine is a few bash scripts, a Redis queue, and a Docker Compose file. There is no framework to learn and nothing hidden. You can read the entire thing in an afternoon.
+
+## Built for a security lab
+
+This is not a toy. It is the harness behind a working Web3 security lab, where the fleet runs continuously to mine known exploit classes, catalog real incidents, draft defensive patterns, and produce reference implementations of the fixes. The three-phase pattern below (research, then design, then implement) is exactly how that lab turns a vague "go study reentrancy" into a folder of concrete, reviewed artifacts.
+
+The skeleton in this repo is that harness with the lab's private packs removed and a tiny public demo pack left in its place, so you can see the machine run end to end and then point it at your own domain.
+
+## What it can do
+
+- **Run agents unattended, for hours or days.** The manager fires on a timer, so the fleet keeps producing while you sleep. Token spend is proportional to worker count, not wall-clock time.
+- **Run on Claude, on local models, or both.** A provider adapter layer means the engine never changes. Use Claude for depth, Ollama for $0 local generation, or Claude-with-Ollama-fallback so the fleet never stops when the Max window cools down.
+- **Retarget to any topic without touching the engine.** Write a pack (`ROLES.md`, `TARGETS.md`, `pack.env`), set `ACTIVE_PACK`, and the whole fleet points at the new domain.
+- **Avoid going in circles.** An anti-loop ledger records every file produced so later fires pick fresh work, and a supervisor halts the fleet when it stops producing breadth or drifts off scope.
+- **Ground its work in real sources (optional).** A per-pack web-grounding step fetches and caches real pages through a self-hosted search engine, so models cite real URLs instead of inventing them.
+- **Stay cheap and recoverable.** Output lands on the host filesystem in real time and is committed every fire, so a crash never loses more than the current round.
+
+## What it can't do (by design, and honest limits)
+
+- **It is not a chat agent.** There is no conversation, no human-in-the-loop approval per step. You set the goal and the guardrails up front, then it runs on its own. That is the point, and it means a bad role brief produces a lot of bad output before you notice.
+- **Output quality tracks the model.** On Claude the documents are deep and well-sourced. On a local 14B coder model they are solid and correct but shorter and plainer. Local long-form research is the weakest case; local code generation is the strongest. Pick the model to match the phase.
+- **Local throughput is bound by your GPU.** All workers share one Ollama server, so on a single GPU local jobs effectively serialize. More workers help on Claude (parallel) far more than on local models.
+- **File attribution under parallel writes is approximate.** When several workers write to the same pack output directory in one fire, the per-worker "new files" count can include a sibling's file. The deliverables are correct; the bookkeeping is fuzzy. The ledger is deduplicated by path.
+- **It does not manage secrets or deploy anything.** It writes files and commits them. Pushing, deploying, and reviewing are still yours.
+- **It will not invent a model for you.** If `AGENT_MODEL` is wrong for your plan or install, the worker fast-fails in seconds. Use an alias like `sonnet` for Claude, or a tag from `ollama list`.
+
 ## Prerequisites
 
 You need two things:
 
-1. **Docker** with Compose (Docker Desktop on macOS/Windows, or Docker Engine on Linux). That's the only hard requirement.
+1. **Docker** with Compose (Docker Desktop on macOS/Windows, or Docker Engine on Linux). That is the only hard requirement.
 2. **An engine to run the agents** — pick at least one:
    - **Claude** (default, highest quality): Claude Code installed and logged in on your host, on a Claude Max plan. The fleet mounts your `~/.claude` session, so workers ride your subscription with zero per-token cost.
    - **Ollama** (free, local, no subscription): [install Ollama](https://ollama.com), then `ollama pull qwen2.5-coder:14b`. Runs on your own GPU, $0 forever.
@@ -28,7 +58,7 @@ docker compose up -d --build  # build + start the fleet
 docker compose logs -f manager
 ```
 
-That's it. The manager runs a canary check, picks two roles, dispatches jobs to the workers, and starts filling `packs/<active>/output/` with content.
+That's it. The manager runs a canary check, picks roles from the active pack, dispatches jobs to the workers, and starts filling `packs/<active>/output/` with content.
 
 ### Or with `make` (macOS/Linux convenience)
 
@@ -45,62 +75,102 @@ make down     # stop everything
 
 ```
 manager: canary: ... OK
-manager: PICK ROLES → researcher, synthesizer
+manager: PICK ROLES → researcher, solution-architect, implementer
 worker:  agent[<provider>:<model>] exit=0 duration=...s
 ```
 
 Files appear under `packs/<active>/output/`. If you set the Ollama provider, the worker line reads `agent[ollama:...]` and not a single Claude call is made.
 
-## The three moving parts
+## Worked example: fixing a reentrancy bug
 
-### 1. The canary (small model ping before each fire)
+The repo ships with a small three-phase pack, `reentrancy-fix-demo`, that takes one well-known smart-contract bug from explanation to fix. It is the fastest way to watch the whole machine work, and it runs on both providers.
 
-Before the manager spends real tokens on the heavy workers, it sends one cheap message to a small model (Haiku by default) and waits for a response. If the canary fails, the fleet sleeps and retries instead of dispatching jobs into a broken auth window or a rate-limited gate.
+The target is the classic reentrancy hole: a vault whose `withdraw()` sends ETH **before** zeroing the caller's balance. Three roles, one per phase:
 
-Think of it as the bell on the door of the stable. If the stable is dark or the door is jammed, you find out for the price of one penny instead of saddling up four horses and discovering it then.
+1. **researcher** explains the vulnerability and the real incidents that used it (e.g. The DAO, 2016) → `output/research/`
+2. **solution-architect** designs the fix across the three standard defenses (Checks-Effects-Interactions, a reentrancy guard, pull-over-push) → `output/solutions/`
+3. **implementer** writes the corrected, compilable Solidity → `output/implementations/`
 
-You can see this in `docker/manager/entrypoint.sh` under the `canary_check` function.
+Run it:
 
-### 2. The orchestrator (the driver)
+```bash
+# in .env
+ACTIVE_PACK=reentrancy-fix-demo
+AGENT_PROVIDER=claude       # or: ollama
+AGENT_MODEL=sonnet          # or: qwen2.5-coder:14b
+FLEET_SIZE=3
 
-The orchestrator is the manager container plus the files in `orchestrator/`. Its whole job is to answer the question "what should the next worker do, and which one should do it?"
+docker compose up -d --build
+```
 
-Per tick (default every 15 minutes) the orchestrator does these things in order.
+One fire produces all three documents. Verified on both providers:
 
-1. Run the canary
-2. Read the active pack's `ROLES.md` and auto-discover every role defined there
-3. Count how many times each role appears in `orchestrator/ANTI_LOOP_LEDGER.md` and prefer the ones with the lowest count, which naturally biases the fleet toward underrepresented work
-4. Build a small JSON envelope per role and LPUSH it onto a Redis queue
-5. Wait for the workers to push results back
-6. Run the supervisor (described below) and decide if the fleet is healthy
-7. Git commit everything and optionally push
-8. Sleep until the next tick
-
-The orchestrator never calls Claude itself. That keeps your token spend proportional to the worker count, not the manager's wall clock.
-
-### 3. The workers (the horses)
-
-Each worker container does the same simple loop forever.
-
-1. Block on `BRPOP fleet:jobs` waiting for an envelope
-2. When one arrives, build a long prompt that includes the role brief from `ROLES.md`, the pack's targets from `TARGETS.md`, and the recent tail of the anti-loop ledger so the worker knows what is already done
-3. Spawn a headless `claude --print` with that prompt
-4. After Claude exits, count how many new files appeared in the workspace via a `find` diff
-5. LPUSH a result envelope back to Redis so the manager can collect it
-6. Loop
-
-Workers write straight to the bind-mounted workspace, so anything Claude produces lands on the host filesystem in real time. The manager picks it up at the end of the fire and commits it.
-
-**A note on `--dangerously-skip-permissions`:** Claude CLI requires this flag to run non-interactively — it cannot be removed. The blast radius is limited structurally: `orchestrator/` is mounted read-only inside every worker container, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoint scripts. Workers can only write to `packs/<name>/` and their own temp files.
-
-## Choosing your LLM provider
-
-The fleet is model-agnostic. The engine (canary, ledger, supervisor, rotation, Redis bus) never changes; only the leaf call that runs the agent swaps behind an adapter. Two providers ship in the box.
-
-| Provider | Cost | Quality | Notes |
+| Phase | File | Claude (`sonnet`) | Ollama (`qwen2.5-coder:14b`, local, $0) |
 |---|---|---|---|
-| `claude` | $0 per token on Claude Max (flat subscription) | highest | Default. Rides your mounted `~/.claude` OAuth session. Rate-limited by the Max usage window. |
-| `ollama` | $0 forever, no subscription | scales with your GPU | Local models via Aider. Install Ollama on the host and `ollama pull <model>` first. No rate window. |
+| 1. research | `research/reentrancy-explained.md` | 189 lines | 65 lines |
+| 2. design | `solutions/reentrancy-fix-design.md` | 192 lines | 115 lines |
+| 3. implement | `implementations/SafeVault.md` | 93 lines | 42 lines |
+
+Both providers produced correct, on-target work: a real explanation of the re-entry sequence, a design that names all three defenses with rationale, and Solidity that applies Checks-Effects-Interactions plus OpenZeppelin's `nonReentrant`. Claude's output is deeper and more thoroughly sourced; the local model's is shorter but technically correct, at zero cost.
+
+Real generated output from both runs is checked in under [`packs/reentrancy-fix-demo/sample-output/`](packs/reentrancy-fix-demo/sample-output/), and the pack itself is documented in [`packs/reentrancy-fix-demo/README.md`](packs/reentrancy-fix-demo/README.md).
+
+## How it works
+
+### The canary (a cheap ping before each fire)
+
+Before the manager spends real work on the heavy workers, it sends one tiny message to a small model (Haiku for Claude, a one-token generation for Ollama) and waits for a response. If the canary fails, the fleet sleeps and retries instead of dispatching jobs into a broken auth window or a rate-limited gate.
+
+It is the bell on the stable door. If the door is jammed you find out for the price of one penny instead of saddling four horses and discovering it then. See `canary_check` in `docker/manager/entrypoint.sh`.
+
+### The orchestrator (the driver)
+
+The orchestrator is the manager container plus the files in `orchestrator/`. Its whole job is to answer "what should the next worker do, and which one should do it?" Per tick (default every 15 minutes) it:
+
+1. Runs the canary.
+2. Reads the active pack's `ROLES.md` and auto-discovers every role defined there.
+3. Counts how many times each role appears in `orchestrator/ANTI_LOOP_LEDGER.md` and prefers the ones with the lowest count, which biases the fleet toward underrepresented work.
+4. Builds a small JSON job per role and LPUSHes it onto a Redis queue.
+5. Waits for the workers to push results back.
+6. Runs the supervisor and decides whether the fleet is healthy.
+7. Commits everything and optionally pushes.
+8. Sleeps until the next tick.
+
+The orchestrator never calls a model itself. That keeps spend proportional to worker count, not the manager's wall clock.
+
+### The workers (the horses)
+
+Each worker container runs the same loop forever:
+
+1. Block on `BRPOP fleet:jobs` waiting for a job.
+2. Build a prompt from the role brief (`ROLES.md`), the pack targets (`TARGETS.md`), and the recent tail of the anti-loop ledger so it knows what is already done.
+3. Run the agent through the provider adapter. For Claude that is a headless `claude --print`; for Ollama it is a direct generation against the local server, and the worker writes the returned document to the role's output file itself.
+4. Count new files in the pack's output directory via a `find` diff.
+5. LPUSH a result envelope back to Redis for the manager to collect.
+6. Loop.
+
+Workers write straight to the bind-mounted workspace, so output lands on the host in real time and the manager commits it at the end of the fire.
+
+**On `--dangerously-skip-permissions`:** the Claude CLI requires this flag to run non-interactively; it cannot be removed. The blast radius is limited structurally. `orchestrator/` is mounted read-only inside every worker, so a misbehaving or injected worker cannot overwrite `NORTH_STAR.json`, the ledger, or the entrypoints. Workers can only write under `packs/<name>/`.
+
+### The supervisor (catches the two failure modes)
+
+Autonomous loops fail two ways: they slide into a polish loop, refining the same files instead of making new ones, or they drift off scope. After every fire the supervisor checks:
+
+- **Zero-file fires.** Three in a row writes `orchestrator/STUCK.md` and the next fire halts.
+- **Same role over and over.** More than three consecutive fires on one role triggers a warning.
+- **Polish creep.** When more than 60% of fires in a sliding window are polish rather than breadth, it halts.
+
+When `STUCK.md` appears, read it and `SUPERVISOR_LOG.jsonl`, decide what changed, remove `STUCK.md`, and resume. Full rules in `orchestrator/SUPERVISOR.md`.
+
+## Providers: Claude and Ollama
+
+The fleet is model-agnostic. The engine (canary, ledger, supervisor, rotation, Redis bus) never changes; only the leaf call that runs the agent swaps behind an adapter in `docker/adapters/`. Two ship in the box.
+
+| Provider | Cost | Quality | How it runs the agent |
+|---|---|---|---|
+| `claude` | $0 per token on Claude Max (flat subscription) | highest | Headless `claude --print` on your mounted `~/.claude` session. Rate-limited by the Max window. |
+| `ollama` | $0 forever, no subscription | scales with your GPU | Direct generation against a host-run Ollama server; the worker writes the returned document. No rate window. |
 
 Set the provider in `.env`:
 
@@ -110,13 +180,15 @@ AGENT_PROVIDER=ollama
 AGENT_MODEL=qwen2.5-coder:14b
 ```
 
+Use an alias (`sonnet`, `opus`, `haiku`) for Claude so the string always resolves to a current model. A worker that fast-fails a few seconds after boot almost always means a wrong `AGENT_MODEL`.
+
 ### The fallback switch (so the fleet never stops)
 
-The most useful setup is Claude for quality with a local fallback. When Claude Max hits its cooldown window, the worker retries the same job on Ollama instead of sleeping — so the fleet keeps producing on your own hardware until Max comes back.
+The most useful setup is Claude for quality with a local fallback. When Claude Max hits its cooldown window, the worker rebuilds the prompt for the fallback provider and retries the same job on Ollama instead of sleeping, so the fleet keeps producing on your own hardware until Max comes back.
 
 ```bash
 AGENT_PROVIDER=claude
-AGENT_MODEL=claude-sonnet-4-7
+AGENT_MODEL=sonnet
 AGENT_FALLBACK=ollama
 FALLBACK_MODEL=qwen2.5-coder:14b
 ```
@@ -124,60 +196,28 @@ FALLBACK_MODEL=qwen2.5-coder:14b
 In the worker logs you'll see the handoff:
 
 ```
-agent[claude:claude-sonnet-4-7] exit=1 duration=9s
+agent[claude:sonnet] exit=1 duration=9s
 primary (claude) walled — falling back to ollama:qwen2.5-coder:14b
 agent[ollama:qwen2.5-coder:14b] exit=0 duration=210s
 ```
 
 ### Adding another provider
 
-Drop a `docker/adapters/<name>.sh` defining `<name>_run_agent`, `<name>_run_canary`, and `<name>_exhaustion_regex`. The dispatcher auto-discovers it — no registration. An Aider-backed adapter can route to GPT, Gemini, or DeepSeek with the same shape.
+Drop a `docker/adapters/<name>.sh` defining `<name>_run_agent`, `<name>_run_canary`, and `<name>_exhaustion_regex`. The dispatcher auto-discovers it; there is no registration step.
 
 ## The three-phase workflow
 
-This skeleton is generic on purpose. You can wire it up to do almost anything but the most productive pattern in practice is a three-phase pipeline. Each phase is a worker role you define.
+The engine is generic, but the most productive pattern is a three-phase pipeline, with each phase a worker role you define. The `reentrancy-fix-demo` pack above is a complete, working instance of it.
 
-### Phase 1, gather information
+1. **Gather (researcher).** Reads `TARGETS.md`, picks a target not yet in the ledger, does the legwork, and writes one structured findings file under `output/research/` (or `output/findings/`, your choice).
+2. **Design (solution-architect).** Reads the research, finds the pattern, and writes a proposal under `output/solutions/` that references the findings it draws from.
+3. **Implement (implementer).** Reads a solution and produces the actual artifact (code, config, contract) under `output/implementations/`.
 
-Your first role is a researcher. It reads `TARGETS.md`, picks one target that is not yet in the anti-loop ledger, does the legwork (web search, document fetching, code inspection), and writes one structured findings file under `packs/<pack>/output/findings/`. Run this phase until the findings directory is dense.
+**Why three phases works.** Each phase produces stable input for the next, and the ledger keeps any phase from redoing finished work. List all three roles in `ROLES.md` and the orchestrator self-balances: lots of phase 1 early, tilting to phase 2 as research stacks up, then to phase 3 once solutions exist. You schedule nothing.
 
-The skeleton ships with a `researcher` role you can use as is or modify.
+## Topic packs — make it your own (the plugin system)
 
-### Phase 2, develop solutions
-
-Your second role is a synthesizer or solution architect. It reads what the researcher produced, looks across multiple findings for patterns, and writes proposal documents under `packs/<pack>/output/solutions/`. Each solution document references the findings it draws from, explains the problem it solves, and outlines the design.
-
-The skeleton ships with a `synthesizer` role as a starting point. Rename or rewrite the brief to focus on producing solution proposals rather than generic syntheses.
-
-### Phase 3, implement those solutions
-
-Your third role is an implementer. It reads a solution document, scaffolds the actual code or configuration or content the solution describes, and writes it under `packs/<pack>/output/implementations/`. This is where the fleet stops talking about the problem and starts producing the artifact that solves it.
-
-The implementer role is not in the skeleton yet because what counts as an implementation depends on what you are building. Add it to `ROLES.md` with a clear brief and the manager will auto-pick it up on the next fire.
-
-### Why three phases works
-
-Each phase produces stable input for the next. Researcher writes a findings file, synthesizer reads it, synthesizer writes a solution file, implementer reads it. The anti-loop ledger keeps any phase from re-doing work that was already done. The supervisor halts the fleet if any phase stops producing breadth, which is your early warning that you have either run out of targets or your role briefs need tightening.
-
-You can run all three phases in parallel within one fleet by listing all three roles in `ROLES.md`. The orchestrator will rotate through them, biased toward whichever phase has the fewest entries in the ledger. Early on this means lots of phase 1. Once findings stack up the rotation naturally tilts toward phase 2. Once solutions exist the rotation naturally tilts toward phase 3. The fleet self-balances without you having to schedule anything.
-
-## How the supervisor catches problems
-
-Autonomous agent loops have two famous failure modes. Either they slide into a polish loop where they keep refining the same files instead of producing new ones, or they drift off scope and start producing material that has nothing to do with the goal. The supervisor is the thing that catches both.
-
-After every fire it does these checks.
-
-- Did any new files get written this fire? If three fires in a row produce zero new files the supervisor writes `orchestrator/STUCK.md` and the next fire halts.
-- Is the same role being picked over and over? More than three fires in a row with the same role triggers a warning.
-- Is the polish ratio creeping up? When more than 60 percent of fires across a sliding window classify as polish rather than breadth, the supervisor halts.
-
-When the supervisor writes `STUCK.md` the operator looks at `SUPERVISOR_LOG.jsonl` and the per-fire reports under `orchestrator/WORKER_REPORTS/`, decides what changed, and removes `STUCK.md` to resume.
-
-You can read the full rules in `orchestrator/SUPERVISOR.md`.
-
-## Topic packs — make it yours (the plugin system)
-
-The engine is domain-agnostic. Everything topic-specific lives in a **pack** — a drop-in plugin folder under `packs/`:
+Everything topic-specific lives in a **pack**, a drop-in folder under `packs/`:
 
 ```
 packs/<topic>/
@@ -187,9 +227,9 @@ packs/<topic>/
   output/       where workers write (created on first run)
 ```
 
-Two ship in the box: `example-research` (generic template) and `web3-security` (a real, filled-in example with web grounding on).
+Three ship in the box: `example-research` (generic template), `web3-security` (a filled-in example with web grounding), and `reentrancy-fix-demo` (the three-phase worked example above).
 
-**Make a pack for your own topic in 3 steps:**
+**Make a pack for your own topic in three steps:**
 
 ```bash
 cp -r packs/example-research packs/my-topic
@@ -198,7 +238,7 @@ cp -r packs/example-research packs/my-topic
 # 3. set ACTIVE_PACK=my-topic in .env, then: docker compose up -d --build
 ```
 
-Swap `ACTIVE_PACK` and the entire fleet retargets — same orchestrator, workers, manager, Redis cache, provider adapters, and web grounding, pointed at a brand-new domain. That's the whole plugin model.
+Swap `ACTIVE_PACK` and the entire fleet retargets, same orchestrator, workers, manager, Redis cache, provider adapters, and web grounding, pointed at a brand-new domain. That is the whole plugin model.
 
 ## Other knobs
 
@@ -206,20 +246,24 @@ Swap `ACTIVE_PACK` and the entire fleet retargets — same orchestrator, workers
 |---|---|
 | `.env` `ACTIVE_PACK` | Which topic pack the fleet runs. |
 | `.env` `AGENT_PROVIDER` / `AGENT_FALLBACK` | Engine (claude / ollama) + auto-fallback. |
+| `.env` `AGENT_MODEL` / `FALLBACK_MODEL` | Worker model per provider (alias for Claude, tag for Ollama). |
+| `.env` `FLEET_SIZE` / `TICK_INTERVAL_MINUTES` | How many workers, how often the manager fires. |
 | pack `pack.env` `WEB_GROUNDING` | Turn the cached SearXNG web-research step on/off for that pack. |
 | pack `pack.env` `SEARCH_PREFERRED_DOMAINS` | High-authority sources to rank first for your topic. |
-| `.env` `CACHE_TTL` / `REDIS_MAXMEMORY` | Research cache lifetime + size (volatile-lru eviction). |
+| `.env` `CACHE_TTL` / `REDIS_MAXMEMORY` | Research cache lifetime + size (volatile-lru eviction; the job queue is never evicted). |
 | `orchestrator/NORTH_STAR.json` | The fleet's stated goal (read by the supervisor). |
 
 ## Troubleshooting
 
-**Manager logs say `canary FAILED`.** Your Claude Max session expired or hit a rate limit. The manager will sleep and retry on its own. If it persists for more than a couple of cycles, check `docker compose logs manager` for the actual error text and confirm your host can run `claude` directly.
+**Manager logs say `canary FAILED`.** For Claude, your Max session expired or hit a rate limit; the manager sleeps and retries. If it persists, check `docker compose logs manager` and confirm your host can run `claude` directly. For Ollama, confirm the server is up (`ollama list`) and reachable at `OLLAMA_API_BASE`.
 
-**Workers are running but no files appear.** Check `orchestrator/WORKER_REPORTS/` for the per-fire result envelopes. `status: no_files_written` means Claude ran but produced nothing, usually because the role brief is too vague or the targets are already exhausted. `status: fast_fail` means Claude exited in under 60 seconds. That is almost always either a Max-plan throttle (the worker sleeps it off and retries) or an invalid `AGENT_MODEL` string for your plan (fix it in `.env` and rebuild). The `extra` field in the result envelope usually shows which.
+**Workers run but no files appear.** Check `orchestrator/WORKER_REPORTS/` for the per-fire envelopes. `status: no_files_written` means the agent ran but produced nothing usable, usually a too-vague role brief or exhausted targets. `status: fast_fail` means the agent exited in under 60 seconds, almost always a wrong `AGENT_MODEL` string (fix it in `.env`, then rebuild) or a provider throttle (the worker sleeps it off). The `extra` field usually shows which.
 
-**Fleet wrote `STUCK.md`.** Read it. Read the supervisor log. Decide if you need new targets, a new role, or just to remove `STUCK.md` and retry.
+**Fleet wrote `STUCK.md`.** Read it, read the supervisor log, decide if you need new targets, a new role, or just to remove `STUCK.md` and retry.
 
-**Files show up with wrong ownership.** The Dockerfiles use `ARG USER_UID` and `USER_GID` from the host. Pass `UID=$(id -u) GID=$(id -g)` to `docker compose` or set them in `.env`.
+**`docker compose up` hangs.** Usually a wedged Docker daemon, not the fleet. Clear stuck `docker compose` clients and restart Docker, then `docker compose up -d` again.
+
+**Files show up with wrong ownership.** The Dockerfiles take `ARG USER_UID` / `USER_GID` from the host. Pass `UID=$(id -u) GID=$(id -g)` to `docker compose` or set them in `.env`.
 
 ## Architecture diagram
 
@@ -230,7 +274,7 @@ manager  ── LPUSH job ──>  redis  <── BRPOP ── worker N
 manager  <── BRPOP result ── redis  <── LPUSH ── worker N
                                             │
                                             ↓
-                                  writes files into ./packs/<name>/
+                                  writes files into ./packs/<name>/output/
                                             │
                                             ↓
                             manager commits + optionally pushes

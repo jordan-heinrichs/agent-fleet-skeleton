@@ -104,15 +104,33 @@ role_output() {
   printf '%s' "$o"
 }
 
+# Best-effort exact deliverable path: the first `output/.../*.md` path named in
+# the role brief, else <output>/<sub>/<role>.md so a file always lands even when
+# the pack doesn't name one. Used by file-writing providers (Ollama direct-gen);
+# strong agents (Claude) pick their own filename and ignore this.
+role_outfile() {  # role
+  local role="$1" sub f
+  sub=$(role_output "$role")
+  f=$(extract_role_brief "$role" \
+        | grep -oE "${OUTPUT_DIR}/[A-Za-z0-9_./-]+\.md" \
+        | head -n1)
+  if [ -n "$f" ]; then
+    printf '%s/%s' "$PACK_DIR" "$f"
+  else
+    printf '%s/%s/%s/%s.md' "$PACK_DIR" "$OUTPUT_DIR" "$sub" "$role"
+  fi
+}
+
 # Build the worker prompt — role brief + pack targets + ledger + (optional)
 # live web sources from the cached research step.
 build_prompt() {
-  local role="$1" fire_id="$2"
-  local tmp brief targets ledger_tail out_sub web_context query
+  local role="$1" fire_id="$2" provider="${3:-$AGENT_PROVIDER}"
+  local tmp brief targets ledger_tail out_sub out_file web_context query
   tmp=$(mktemp /tmp/fleet-prompt-XXXXXX.md)
   brief=$(extract_role_brief "$role")
   targets=$(cat "${PACK_DIR}/TARGETS.md" 2>/dev/null || echo "(no TARGETS.md in pack)")
   out_sub=$(role_output "$role")
+  out_file=$(role_outfile "$role")
   ledger_tail=$(tail -80 orchestrator/ANTI_LOOP_LEDGER.md 2>/dev/null \
     | grep -E '^- .+ ← [a-z-]+ \(fire #[0-9]+\)$' || echo "(empty ledger)")
 
@@ -131,6 +149,7 @@ ${web_context}
 "
   fi
 
+  # Shared context block — identical for every provider.
   cat > "$tmp" <<PROMPT
 You are a worker in an autonomous agent fleet (fire #${fire_id}).
 Pack: ${PACK_NAME}.  Role: ${role}.  WORKDIR: /workspace
@@ -148,10 +167,42 @@ TARGETS (from ${PACK_DIR}/TARGETS.md)
 ${targets}
 
 ═══════════════════════════════════════════════════════════════════════
-ALREADY COVERED — do NOT duplicate
+ALREADY COVERED — prefer something new
 ═══════════════════════════════════════════════════════════════════════
 
 ${ledger_tail}
+PROMPT
+
+  # Provider-specific task section.
+  #  • Agentic providers (claude) use tools to write files, then report a JSON
+  #    accounting line. Unchanged from the original contract.
+  #  • Direct-generation providers (ollama) cannot use tools — their entire text
+  #    response IS the deliverable, so we ask for the document itself and
+  #    nothing else. Asking such a model for "files + JSON" makes it emit only
+  #    the JSON and skip the document, which is exactly what we must avoid.
+  if [ "$provider" = "ollama" ]; then
+    cat >> "$tmp" <<PROMPT
+
+═══════════════════════════════════════════════════════════════════════
+TASK — write the document
+═══════════════════════════════════════════════════════════════════════
+
+Do the work described in YOUR ROLE BRIEF. ${WEB_GROUNDING:+Use ONLY facts and URLs from the LIVE WEB SOURCES above; do not invent sources. }Prefer a target not in the ALREADY COVERED list; if everything is covered, DEEPEN the document instead. Never refuse and never return an empty or JSON-only response.
+
+OUTPUT RULES — strict:
+- Your ENTIRE response becomes this one file: ${out_file}
+- Output ONLY the document, in GitHub-flavored Markdown, beginning immediately
+  with a "# " title line.
+- Meet your role brief's quality bar (length, depth, concreteness).
+- Do NOT output JSON, status lines, file paths, apologies, or any commentary
+  before or after the document.
+- Do NOT wrap the whole document in a code fence. Fenced code blocks INSIDE the
+  document (for example \`\`\`solidity) are expected where relevant.
+
+Begin the document now.
+PROMPT
+  else
+    cat >> "$tmp" <<PROMPT
 
 ═══════════════════════════════════════════════════════════════════════
 TASK
@@ -171,6 +222,7 @@ CONSTRAINTS:
 
 GO. You have ${CLAUDE_MAX_MINUTES} minutes.
 PROMPT
+  fi
   printf '%s' "$tmp"
 }
 
@@ -238,15 +290,22 @@ while true; do
   git fetch --all --prune 2>/dev/null || true
   mkdir -p "${PACK_DIR}/${OUTPUT_DIR}/$(role_output "$role")" 2>/dev/null || true
 
-  PRE_FILES=$(find . -name '*.md' -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null | sort)
+  # Scope new-file detection to the pack's output dir only. Counting the whole
+  # repo would pick up provider scratch files (e.g. aider's chat history) and
+  # report them as deliverables — a false positive that hides a real failure.
+  PRE_FILES=$(find "${PACK_DIR}/${OUTPUT_DIR}" -name '*.md' 2>/dev/null | sort)
 
-  prompt_file=$(build_prompt "$role" "$fire_id")
+  prompt_file=$(build_prompt "$role" "$fire_id" "$AGENT_PROVIDER")
   log "prompt built: $prompt_file ($(wc -l < "$prompt_file") lines)"
 
   # ── Run the agent: primary provider, with one-shot fallback ─────────────
   AGENT_LOG=$(mktemp /tmp/fleet-agent-XXXXXX.log)
   ACTIVE_PROVIDER="$AGENT_PROVIDER"
   ACTIVE_MODEL="$MODEL"
+
+  # Tell file-writing providers (Ollama direct-gen) exactly where the deliverable
+  # goes. Strong agents (Claude) write files themselves and ignore this.
+  export FLEET_OUT_FILE="$(role_outfile "$role")"
 
   START_TS=$(date +%s)
   provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
@@ -261,6 +320,8 @@ while true; do
     log "primary ($ACTIVE_PROVIDER) walled — falling back to ${AGENT_FALLBACK}:${FALLBACK_MODEL}"
     ACTIVE_PROVIDER="$AGENT_FALLBACK"
     ACTIVE_MODEL="$FALLBACK_MODEL"
+    # Rebuild the prompt for the fallback provider's mode (agentic vs direct-gen).
+    rm -f "$prompt_file"; prompt_file=$(build_prompt "$role" "$fire_id" "$ACTIVE_PROVIDER")
     START_TS=$(date +%s)
     provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
     AGENT_EXIT=$?
@@ -285,7 +346,7 @@ while true; do
     continue
   fi
 
-  POST_FILES=$(find . -name '*.md' -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null | sort)
+  POST_FILES=$(find "${PACK_DIR}/${OUTPUT_DIR}" -name '*.md' 2>/dev/null | sort)
   NEW_FILES_LIST=$(comm -13 <(printf '%s\n' "$PRE_FILES") <(printf '%s\n' "$POST_FILES") || true)
   # grep -c prints "0" AND exits 1 on no-match — pipe through head -n1 to
   # avoid the multi-line value that would break integer compares + jq.

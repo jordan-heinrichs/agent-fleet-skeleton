@@ -12,7 +12,7 @@
 │         │                └────────────┘         └─────┬──────┘        │
 │         │                                             │               │
 │         ↓                                             ↓               │
-│    canary check                              `claude --print` per job │
+│    canary check                              `provider agent` per job │
 │    (Haiku ping)                                      ↓                │
 │         │                                             │               │
 │         └──────────── git commit + optional push ────┘               │
@@ -26,36 +26,40 @@
                 │                             │
                 │ orchestrator/               │
                 │   NORTH_STAR.{md,json}      │
-                │   ROLES.md           │
                 │   ANTI_LOOP_LEDGER.md       │
                 │   SUPERVISOR.md             │
                 │   SUPERVISOR_LOG.jsonl      │
                 │   WORKER_REPORTS/           │
                 │                             │
-                │ packs/<active>/output/          │
-                │   TARGETS.md        │
-                │   findings/    (worker out) │
-                │   synthesis/   (worker out) │
+                │ packs/<active>/             │
+                │   pack.env                  │
+                │   ROLES.md                  │
+                │   TARGETS.md                │
+                │   output/  (worker out)     │
                 └─────────────────────────────┘
 ```
 
 ## Per-tick flow
 
-1. **Manager** wakes from sleep, runs a canary check against `claude` with
-   the Haiku model. If the canary fails (network down, rate-limited, auth
-   broken), the manager sleeps `PAUSE_BASE_MINUTES` (default 30) and retries.
+1. **Manager** wakes from sleep and runs a canary check against the active
+   provider (a Haiku ping for Claude; a one-token generation for Ollama). If the
+   canary fails (network down, rate-limited, auth broken), the manager sleeps
+   `PAUSE_BASE_MINUTES` (default 30) and retries.
 2. **Manager** discovers available roles by grepping `## <name>` headings in
    `the pack ROLES.md`. It counts `← <role>` entries in
    `ANTI_LOOP_LEDGER.md` per role, sorts ascending, and picks the lowest
    `FLEET_SIZE` count roles.
 3. **Manager** drains the result queue (atomic Redis `DEL`) then LPUSHes one
    job per picked role. Each job is a small JSON envelope with role, fire id,
-   project name, and timeout.
+   pack name, and timeout.
 4. **Workers** are blocked on `BRPOP fleet:jobs`. Each grabs one job, builds
-   a prompt that embeds the role brief + project targets + recent ledger
-   tail, and runs `claude --print` with the model from `AGENT_MODEL`.
+   a prompt that embeds the role brief + pack targets + recent ledger tail,
+   then runs the active provider's agent — Claude Code (`claude --print`) for
+   the `claude` provider, or a direct Ollama generation for the `ollama`
+   provider — with the model from `AGENT_MODEL`.
 5. **Workers** write outputs straight to the bind-mounted workspace. After
-   `claude` exits, the worker counts new files via `find` diff, packages a
+   the agent exits, the worker counts new files in the pack's output dir via a
+   `find` diff, packages a
    result envelope (including the list of new files), and LPUSHes it to
    `fleet:results`. Workers never write `orchestrator/` themselves — it is
    mounted read-only inside every worker container.
