@@ -1,0 +1,45 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash syntax check (entrypoints + adapters)
+        run: |
+          set -e
+          for f in docker/manager/entrypoint.sh \
+                   docker/worker/entrypoint.sh \
+                   docker/adapters/*.sh; do
+            bash -n "$f" && echo "ok: $f"
+          done
+
+      - name: Validate docker compose
+        run: |
+          docker compose config -q
+          echo "compose config: ok"
+
+      - name: Required files present
+        run: |
+          set -e
+          for f in README.md LICENSE .env.example docker-compose.yml \
+                   docker/manager/Dockerfile docker/worker/Dockerfile \
+                   docker/adapters/dispatch.sh \
+                   orchestrator/WORKER_ROLES.md orchestrator/NORTH_STAR.json; do
+            test -f "$f" && echo "present: $f"
+          done
+
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning \
+            docker/manager/entrypoint.sh \
+            docker/worker/entrypoint.sh \
+            docker/adapters/*.sh || true

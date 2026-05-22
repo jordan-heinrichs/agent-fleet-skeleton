@@ -1,30 +1,55 @@
 # agent-fleet-skeleton
 
-A runnable starter for an autonomous Claude agent fleet. One driver, a few horses, and a track to run them on.
+![validate](https://github.com/Drock91/agent-fleet-skeleton/actions/workflows/ci.yml/badge.svg)
+![license](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Think of it like harnessing AI horses. Each worker is a horse that can pull a heavy load (one focused Claude session) but a single horse alone runs in circles. The orchestrator is the driver who decides which horse goes where, the canary is the stable check before you saddle up, and the supervisor is the trainer who pulls a horse off the track when it stops pulling its weight. You provide the goal and the track. The fleet does the running.
+A runnable starter for an autonomous agent fleet. One driver, a few horses, and a track to run them on. Works with Claude (rides your Max plan) or fully local models via Ollama, and auto-switches between them.
 
-It rides your host's Claude Max subscription via OAuth, so the workers cost zero dollars in API spend while you iterate.
+Think of it like harnessing AI horses. Each worker is a horse that can pull a heavy load (one focused agent session) but a single horse alone runs in circles. The orchestrator is the driver who decides which horse goes where, the canary is the stable check before you saddle up, and the supervisor is the trainer who pulls a horse off the track when it stops pulling its weight. You provide the goal and the track. The fleet does the running.
+
+## Prerequisites
+
+You need two things:
+
+1. **Docker** with Compose (Docker Desktop on macOS/Windows, or Docker Engine on Linux). That's the only hard requirement.
+2. **An engine to run the agents** — pick at least one:
+   - **Claude** (default, highest quality): Claude Code installed and logged in on your host, on a Claude Max plan. The fleet mounts your `~/.claude` session, so workers ride your subscription with zero per-token cost.
+   - **Ollama** (free, local, no subscription): [install Ollama](https://ollama.com), then `ollama pull qwen2.5-coder:14b`. Runs on your own GPU, $0 forever.
+
+Optional: `make` for the convenience commands below, and an SSH key if you want the fleet to auto-push its commits.
 
 ## Quick start (about 5 minutes)
 
 ```bash
-# 1. clone
 git clone https://github.com/Drock91/agent-fleet-skeleton
 cd agent-fleet-skeleton
-
-# 2. configure
-cp .env.example .env
-# open .env and skim it. Defaults are sane.
-
-# 3. boot
-docker compose up -d --build
-
-# 4. watch the manager
+cp .env.example .env          # defaults are sane; edit to pick your provider
+docker compose up -d --build  # build + start the fleet
 docker compose logs -f manager
 ```
 
-That's it. The manager will run a canary check, pick two roles, dispatch jobs to the workers, and start filling `projects/example-project/findings/` with content.
+That's it. The manager runs a canary check, picks two roles, dispatches jobs to the workers, and starts filling `projects/example-project/findings/` with content.
+
+### Or with `make` (macOS/Linux convenience)
+
+```bash
+make doctor   # check your prerequisites first
+make up       # creates .env if missing, builds, starts
+make logs     # follow the manager
+make status   # container status + recent fires
+make clean    # stop + wipe generated output
+make down     # stop everything
+```
+
+### Verify it's working
+
+```
+manager: canary: ... OK
+manager: PICK ROLES → researcher, synthesizer
+worker:  agent[<provider>:<model>] exit=0 duration=...s
+```
+
+Files appear under `projects/example-project/`. If you set the Ollama provider, the worker line reads `agent[ollama:...]` and not a single Claude call is made.
 
 ## The three moving parts
 
