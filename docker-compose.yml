@@ -66,15 +66,15 @@ services:
         target: /workspace
       # Claude Max credentials — same host session as your interactive Claude Code.
       - type: bind
-        source: ${HOME}/.claude
+        source: ${HOST_HOME}/.claude
         target: /home/fleet/.claude
       - type: bind
-        source: ${HOME}/.claude.json
+        source: ${HOST_HOME}/.claude.json
         target: /home/fleet/.claude.json.host
         read_only: true
       # SSH key — required only if AGENT_AUTO_PUSH=true.
       - type: bind
-        source: ${HOME}/.ssh
+        source: ${HOST_HOME}/.ssh
         target: /home/fleet/.ssh
         read_only: true
 
@@ -131,10 +131,10 @@ services:
         target: /workspace/orchestrator
         read_only: true
       - type: bind
-        source: ${HOME}/.claude
+        source: ${HOST_HOME}/.claude
         target: /home/fleet/.claude
       - type: bind
-        source: ${HOME}/.claude.json
+        source: ${HOST_HOME}/.claude.json
         target: /home/fleet/.claude.json.host
         read_only: true
     deploy:
