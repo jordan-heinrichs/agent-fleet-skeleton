@@ -84,6 +84,16 @@ done
 
 mkdir -p "$ORCH_DIR/WORKER_REPORTS"
 
+# H-02: On boot, move any jobs left in the processing queue by a previous crash
+# back into the job queue so they get retried this session.
+orphaned=$(redis LLEN "${JOB_QUEUE}-processing" 2>/dev/null || echo 0)
+if [ "${orphaned:-0}" -gt 0 ] 2>/dev/null; then
+  for _i in $(seq 1 "$orphaned"); do
+    redis LMOVE "${JOB_QUEUE}-processing" "$JOB_QUEUE" LEFT RIGHT >/dev/null 2>&1 || true
+  done
+  log "requeued $orphaned orphaned job(s) from previous crash"
+fi
+
 # Discover roles from WORKER_ROLES.md. Each role section starts with `## <name>`.
 discover_roles() {
   grep -oE '^## [a-z][a-z0-9-]+' "${ORCH_DIR}/WORKER_ROLES.md" 2>/dev/null \
