@@ -88,3 +88,7 @@ the rotation picker.
 - ./packs/example-research/output/findings/token-efficiency-dynamic-allocation-llms-2025.md ← researcher (fire #24)
 - ./packs/example-research/output/findings/token-efficiency-dynamic-allocation-llms-2025.md ← synthesizer (fire #24)
 - ./packs/example-research/output/synthesis/inference-time-optimization-speed-quality-reasoning-tradeoffs-2025.md ← synthesizer (fire #24)
+- ./packs/example-research/output/findings/direct-preference-optimization-alignment-beyond-rlhf-2025.md ← synthesizer (fire #25)
+- ./packs/example-research/output/synthesis/post-deployment-model-adaptation-weight-tuning-continual-learning-prompt-optimization-2025.md ← synthesizer (fire #25)
+- ./packs/example-research/output/findings/direct-preference-optimization-alignment-beyond-rlhf-2025.md ← researcher (fire #25)
+- ./packs/example-research/output/synthesis/post-deployment-model-adaptation-weight-tuning-continual-learning-prompt-optimization-2025.md ← researcher (fire #25)
