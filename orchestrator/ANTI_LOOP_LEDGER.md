@@ -104,3 +104,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/llm-api-design-patterns-function-calling-2025.md ← researcher (fire #29)
 - ./packs/example-research/output/findings/llm-api-design-patterns-function-calling-2025.md ← synthesizer (fire #29)
 - ./packs/example-research/output/synthesis/scaling-capability-correctness-reliability-gap-2025.md ← synthesizer (fire #29)
+- ./packs/example-research/output/findings/llm-watermarking-content-detection-provenance-2025.md ← researcher (fire #30)
+- ./packs/example-research/output/findings/llm-watermarking-content-detection-provenance-2025.md ← synthesizer (fire #30)
+- ./packs/example-research/output/synthesis/context-adaptive-inference-routing-efficiency-ecosystem-2025.md ← synthesizer (fire #30)
