@@ -63,3 +63,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/efficiency-capability-safety-trilemma-2025.md ← researcher (fire #11)
 - ./packs/example-research/output/findings/scaling-laws-compute-optimal-training-2025.md ← synthesizer (fire #11)
 - ./packs/example-research/output/synthesis/efficiency-capability-safety-trilemma-2025.md ← synthesizer (fire #11)
+- ./packs/example-research/output/synthesis/adversarial-robustness-evaluation-generalization-gap-2025.md ← synthesizer (fire #12)
+- ./packs/example-research/output/findings/constitutional-ai-value-alignment-methods-2025.md ← researcher (fire #12)
+- ./packs/example-research/output/synthesis/adversarial-robustness-evaluation-generalization-gap-2025.md ← researcher (fire #12)
