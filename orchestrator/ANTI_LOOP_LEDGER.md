@@ -72,3 +72,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/uncertainty-quantification-confidence-calibration-llms-2025.md ← researcher (fire #19)
 - ./packs/example-research/output/findings/uncertainty-quantification-confidence-calibration-llms-2025.md ← synthesizer (fire #19)
 - ./packs/example-research/output/synthesis/llm-self-awareness-reliability-abstention-gap-2025.md ← synthesizer (fire #19)
+- ./packs/example-research/output/synthesis/observability-first-deployment-reliability-assurance-gap-2025.md ← synthesizer (fire #20)
+- ./packs/example-research/output/findings/continual-learning-catastrophic-forgetting-llms-2025.md ← researcher (fire #20)
+- ./packs/example-research/output/synthesis/observability-first-deployment-reliability-assurance-gap-2025.md ← researcher (fire #20)
