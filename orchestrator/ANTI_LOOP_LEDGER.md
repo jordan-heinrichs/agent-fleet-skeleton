@@ -95,3 +95,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/transformer-alternatives-efficient-attention-mechanisms-2025.md ← researcher (fire #26)
 - ./packs/example-research/output/findings/transformer-alternatives-efficient-attention-mechanisms-2025.md ← synthesizer (fire #26)
 - ./packs/example-research/output/synthesis/benchmark-deployment-capability-measurement-gap-2025.md ← synthesizer (fire #26)
+- ./packs/example-research/output/findings/program-synthesis-code-generation-llms-2025.md ← researcher (fire #27)
+- ./packs/example-research/output/findings/program-synthesis-code-generation-llms-2025.md ← synthesizer (fire #27)
+- ./packs/example-research/output/synthesis/efficiency-strategies-architecture-routing-sparsity-parameter-reduction-2025.md ← synthesizer (fire #27)
