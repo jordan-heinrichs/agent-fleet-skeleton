@@ -107,3 +107,7 @@ the rotation picker.
 - ./packs/example-research/output/findings/llm-watermarking-content-detection-provenance-2025.md ← researcher (fire #30)
 - ./packs/example-research/output/findings/llm-watermarking-content-detection-provenance-2025.md ← synthesizer (fire #30)
 - ./packs/example-research/output/synthesis/context-adaptive-inference-routing-efficiency-ecosystem-2025.md ← synthesizer (fire #30)
+- ./packs/example-research/output/findings/emergent-capabilities-llms-prediction-mechanisms-2025.md ← researcher (fire #31)
+- ./packs/example-research/output/synthesis/modular-composition-dynamic-routing-inference-specialization-2025.md ← researcher (fire #31)
+- ./packs/example-research/output/findings/emergent-capabilities-llms-prediction-mechanisms-2025.md ← synthesizer (fire #31)
+- ./packs/example-research/output/synthesis/modular-composition-dynamic-routing-inference-specialization-2025.md ← synthesizer (fire #31)
