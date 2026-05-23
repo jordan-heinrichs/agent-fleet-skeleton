@@ -25,3 +25,4 @@
 {"ts":"2026-05-23T21:05:01Z","fire_id":29,"fleet_size":4,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T21:12:19Z","fire_id":30,"fleet_size":4,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T21:18:56Z","fire_id":31,"fleet_size":4,"files_written_total":4,"decision":"healthy"}
+{"ts":"2026-05-23T21:24:45Z","fire_id":32,"fleet_size":4,"files_written_total":0,"decision":"stuck:zero_files"}
