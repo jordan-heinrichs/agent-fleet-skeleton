@@ -82,3 +82,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/in-context-learning-few-shot-adaptation-efficiency-mechanisms-2025.md ← synthesizer (fire #22)
 - ./packs/example-research/output/findings/speculative-decoding-early-exit-inference-efficiency-2025.md ← researcher (fire #22)
 - ./packs/example-research/output/synthesis/in-context-learning-few-shot-adaptation-efficiency-mechanisms-2025.md ← researcher (fire #22)
+- ./packs/example-research/output/synthesis/multilingual-reasoning-transfer-authenticity-gap-2025.md ← synthesizer (fire #23)
+- ./packs/example-research/output/findings/adaptive-decoding-strategies-inference-efficiency-2025.md ← researcher (fire #23)
+- ./packs/example-research/output/synthesis/multilingual-reasoning-transfer-authenticity-gap-2025.md ← researcher (fire #23)
