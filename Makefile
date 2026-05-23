@@ -11,14 +11,19 @@ export GID := $(shell id -g 2>/dev/null || echo 1000)
 COMPOSE := docker compose
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs logs-worker status clean doctor ollama-pull
+.PHONY: help setup up down restart logs logs-worker status clean doctor ollama-pull
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}'
 
-up: ## build + start the fleet (creates .env from the example if missing)
+setup: ## create .env + host mount placeholders (safe to re-run)
+	@bash setup.sh
+
+up: ## build + start the fleet (creates .env + mount placeholders if missing)
 	@test -f .env || (cp .env.example .env && echo "created .env from .env.example — review it")
+	@mkdir -p "$$HOME/.claude" "$$HOME/.ssh"
+	@test -e "$$HOME/.claude.json" || printf '{}\n' > "$$HOME/.claude.json"
 	$(COMPOSE) up -d --build
 	@echo "fleet up. follow it with:  make logs"
 
@@ -40,9 +45,9 @@ status: ## container status + the last few supervisor decisions
 	@echo "--- recent fires ---"
 	@tail -n 5 orchestrator/SUPERVISOR_LOG.jsonl 2>/dev/null || echo "(no fires yet)"
 
-clean: ## stop the fleet + wipe generated output (keeps your .env)
+clean: ## stop the fleet + wipe generated output (keeps your .env + sample-output)
 	-$(COMPOSE) down
-	rm -rf projects/*/findings projects/*/synthesis \
+	rm -rf packs/*/output \
 	       orchestrator/WORKER_REPORTS orchestrator/last-canary*.log .aider*
 	-git checkout -- orchestrator/ANTI_LOOP_LEDGER.md orchestrator/SUPERVISOR_LOG.jsonl 2>/dev/null
 	@echo "cleaned."

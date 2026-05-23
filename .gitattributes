@@ -1,0 +1,13 @@
+# Normalize line endings across platforms. This is a Docker + bash project, so
+# every text file is checked out with LF, even on Windows. Without this, shell
+# scripts cloned on Windows get CRLF and fail to run on Linux/macOS and inside
+# the containers.
+* text=auto eol=lf
+
+# Binaries: never touch.
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.pdf -text

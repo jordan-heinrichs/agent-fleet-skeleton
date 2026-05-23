@@ -53,10 +53,14 @@ Optional: `make` for the convenience commands below, and an SSH key if you want 
 ```bash
 git clone https://github.com/Drock91/agent-fleet-skeleton
 cd agent-fleet-skeleton
-cp .env.example .env          # defaults are sane; edit to pick your provider
+bash setup.sh                 # creates .env + the host mount placeholders
 docker compose up -d --build  # build + start the fleet
 docker compose logs -f manager
 ```
+
+`setup.sh` is safe to re-run. It copies `.env.example` to `.env` if you don't have one, and creates empty `~/.claude`, `~/.claude.json`, and `~/.ssh` placeholders so the Docker mounts resolve even if you only plan to use Ollama and have never installed Claude. Claude users already have these and the script leaves them untouched.
+
+By default the fleet uses Claude. If you want the free local path instead, set `AGENT_PROVIDER=ollama` and `AGENT_MODEL=qwen2.5-coder:14b` in `.env` before starting (and make sure Ollama is running with that model pulled).
 
 That's it. The manager runs a canary check, picks roles from the active pack, dispatches jobs to the workers, and starts filling `packs/<active>/output/` with content.
 
