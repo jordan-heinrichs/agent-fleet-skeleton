@@ -75,3 +75,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/observability-first-deployment-reliability-assurance-gap-2025.md ← synthesizer (fire #20)
 - ./packs/example-research/output/findings/continual-learning-catastrophic-forgetting-llms-2025.md ← researcher (fire #20)
 - ./packs/example-research/output/synthesis/observability-first-deployment-reliability-assurance-gap-2025.md ← researcher (fire #20)
+- ./packs/example-research/output/findings/automated-prompt-optimization-techniques-2025.md ← researcher (fire #21)
+- ./packs/example-research/output/findings/automated-prompt-optimization-techniques-2025.md ← synthesizer (fire #21)
+- ./packs/example-research/output/synthesis/training-data-integrity-alignment-fairness-gap-2025.md ← synthesizer (fire #21)
