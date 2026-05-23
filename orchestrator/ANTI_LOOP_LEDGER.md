@@ -66,3 +66,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/adversarial-robustness-evaluation-generalization-gap-2025.md ← synthesizer (fire #12)
 - ./packs/example-research/output/findings/constitutional-ai-value-alignment-methods-2025.md ← researcher (fire #12)
 - ./packs/example-research/output/synthesis/adversarial-robustness-evaluation-generalization-gap-2025.md ← researcher (fire #12)
+- ./packs/example-research/output/findings/bias-fairness-llms-evaluation-mitigation-2025.md ← researcher (fire #18)
+- ./packs/example-research/output/findings/bias-fairness-llms-evaluation-mitigation-2025.md ← synthesizer (fire #18)
+- ./packs/example-research/output/synthesis/trustworthy-ai-systems-fact-verification-value-alignment-2025.md ← synthesizer (fire #18)
