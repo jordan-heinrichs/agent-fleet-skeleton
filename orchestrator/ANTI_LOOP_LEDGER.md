@@ -56,3 +56,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/knowledge-editing-fact-updates-llms-2025.md ← researcher (fire #9)
 - ./packs/example-research/output/findings/knowledge-editing-fact-updates-llms-2025.md ← synthesizer (fire #9)
 - ./packs/example-research/output/synthesis/small-model-reasoning-distillation-data-scaling-2025.md ← synthesizer (fire #9)
+- ./packs/example-research/output/findings/multimodal-vision-language-integration-architectures-2025.md ← researcher (fire #10)
+- ./packs/example-research/output/findings/multimodal-vision-language-integration-architectures-2025.md ← synthesizer (fire #10)
+- ./packs/example-research/output/synthesis/multimodal-foundation-models-vision-language-integration-cross-modal-reasoning-2025.md ← synthesizer (fire #10)
