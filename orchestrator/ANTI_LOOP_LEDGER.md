@@ -101,3 +101,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/reasoning-verification-self-correction-mechanisms-2025.md ← researcher (fire #28)
 - ./packs/example-research/output/findings/reasoning-verification-self-correction-mechanisms-2025.md ← synthesizer (fire #28)
 - ./packs/example-research/output/synthesis/reliability-at-scale-hallucination-uncertainty-knowledge-integration-2025.md ← synthesizer (fire #28)
+- ./packs/example-research/output/findings/llm-api-design-patterns-function-calling-2025.md ← researcher (fire #29)
+- ./packs/example-research/output/findings/llm-api-design-patterns-function-calling-2025.md ← synthesizer (fire #29)
+- ./packs/example-research/output/synthesis/scaling-capability-correctness-reliability-gap-2025.md ← synthesizer (fire #29)
