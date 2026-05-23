@@ -59,3 +59,7 @@ the rotation picker.
 - ./packs/example-research/output/findings/multimodal-vision-language-integration-architectures-2025.md ← researcher (fire #10)
 - ./packs/example-research/output/findings/multimodal-vision-language-integration-architectures-2025.md ← synthesizer (fire #10)
 - ./packs/example-research/output/synthesis/multimodal-foundation-models-vision-language-integration-cross-modal-reasoning-2025.md ← synthesizer (fire #10)
+- ./packs/example-research/output/findings/scaling-laws-compute-optimal-training-2025.md ← researcher (fire #11)
+- ./packs/example-research/output/synthesis/efficiency-capability-safety-trilemma-2025.md ← researcher (fire #11)
+- ./packs/example-research/output/findings/scaling-laws-compute-optimal-training-2025.md ← synthesizer (fire #11)
+- ./packs/example-research/output/synthesis/efficiency-capability-safety-trilemma-2025.md ← synthesizer (fire #11)
