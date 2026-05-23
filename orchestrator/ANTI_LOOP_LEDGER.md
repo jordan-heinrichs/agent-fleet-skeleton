@@ -53,3 +53,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/inference-economics-cost-performance-reliability-tradeoffs-2025.md ← researcher (fire #8)
 - ./packs/example-research/output/findings/mixture-of-experts-moe-scaling-efficiency-2025.md ← synthesizer (fire #8)
 - ./packs/example-research/output/synthesis/inference-economics-cost-performance-reliability-tradeoffs-2025.md ← synthesizer (fire #8)
+- ./packs/example-research/output/findings/knowledge-editing-fact-updates-llms-2025.md ← researcher (fire #9)
+- ./packs/example-research/output/findings/knowledge-editing-fact-updates-llms-2025.md ← synthesizer (fire #9)
+- ./packs/example-research/output/synthesis/small-model-reasoning-distillation-data-scaling-2025.md ← synthesizer (fire #9)

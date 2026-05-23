@@ -6,3 +6,4 @@
 {"ts":"2026-05-23T16:01:46Z","fire_id":6,"fleet_size":2,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T16:18:20Z","fire_id":7,"fleet_size":2,"files_written_total":4,"decision":"healthy"}
 {"ts":"2026-05-23T16:34:56Z","fire_id":8,"fleet_size":2,"files_written_total":4,"decision":"healthy"}
+{"ts":"2026-05-23T16:51:55Z","fire_id":9,"fleet_size":2,"files_written_total":3,"decision":"healthy"}
