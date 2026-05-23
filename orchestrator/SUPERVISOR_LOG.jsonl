@@ -1,1 +1,2 @@
 {"ts":"2026-05-19T00:00:00Z","fire_id":0,"event":"supervisor_bootstrap","decision":"healthy","note":"Fleet skeleton initialized. Subsequent fires append here."}
+{"ts":"2026-05-23T14:53:59Z","fire_id":2,"fleet_size":2,"files_written_total":3,"decision":"healthy"}

@@ -30,3 +30,6 @@ the rotation picker.
 <!-- New entries go here, newest at top. Format:
 - path/to/file.md ← role-name (fire #N)
 -->
+- ./packs/example-research/output/findings/long-context-llms-scaling-challenges-2025.md ← researcher (fire #2)
+- ./packs/example-research/output/findings/long-context-llms-scaling-challenges-2025.md ← synthesizer (fire #2)
+- ./packs/example-research/output/synthesis/llm-benchmark-reliability-measurement-gap-2025.md ← synthesizer (fire #2)
