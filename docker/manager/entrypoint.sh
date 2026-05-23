@@ -62,7 +62,9 @@ git config --global --add safe.directory '*'        2>/dev/null || true
 git config --global user.name  "${GIT_AUTHOR_NAME:-fleet manager}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-manager@fleet.local}"
 
-log "boot: tick=${TICK_INTERVAL_MINUTES}m size=$FLEET_SIZE redis=$REDIS_URL pack=$ACTIVE_PACK"
+_REDIS_SAFE=$(printf '%s' "$REDIS_URL" | sed 's|://[^@]*@|://***@|')
+log "boot: tick=${TICK_INTERVAL_MINUTES}m size=$FLEET_SIZE redis=$_REDIS_SAFE pack=$ACTIVE_PACK"
+unset _REDIS_SAFE
 
 # SSH key perm fix — Windows bind mounts come through 0755 which OpenSSH rejects.
 if [ -d "$HOME/.ssh" ]; then
@@ -96,6 +98,13 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 mkdir -p "$ORCH_DIR/WORKER_REPORTS"
+
+# Restore fire_id from Redis so it never resets after a manager restart.
+# A reset would re-use IDs whose fire-scoped result queues may still be live
+# in Redis (within their 1-hour TTL), causing stale results to be collected.
+fire_id=$(redis GET fleet:fire_id 2>/dev/null || echo "")
+case "$fire_id" in ''|*[!0-9]*) fire_id=0 ;; esac
+log "boot: resuming from fire_id=$fire_id"
 
 # H-02: On boot, recover any jobs left in the processing queue by a previous
 # crash — move them back so they get retried this session.

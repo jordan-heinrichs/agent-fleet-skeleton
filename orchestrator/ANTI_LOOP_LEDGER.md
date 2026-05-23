@@ -33,3 +33,6 @@ the rotation picker.
 - ./packs/example-research/output/findings/long-context-llms-scaling-challenges-2025.md ← researcher (fire #2)
 - ./packs/example-research/output/findings/long-context-llms-scaling-challenges-2025.md ← synthesizer (fire #2)
 - ./packs/example-research/output/synthesis/llm-benchmark-reliability-measurement-gap-2025.md ← synthesizer (fire #2)
+- ./packs/example-research/output/findings/llm-hallucination-mitigation-strategies-2025.md ← researcher (fire #3)
+- ./packs/example-research/output/findings/llm-hallucination-mitigation-strategies-2025.md ← synthesizer (fire #3)
+- ./packs/example-research/output/synthesis/long-context-reasoning-measurement-gap-2025.md ← synthesizer (fire #3)
