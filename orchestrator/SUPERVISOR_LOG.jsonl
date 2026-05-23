@@ -4,3 +4,4 @@
 {"ts":"2026-05-23T15:28:10Z","fire_id":4,"fleet_size":2,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T15:44:35Z","fire_id":5,"fleet_size":2,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T16:01:46Z","fire_id":6,"fleet_size":2,"files_written_total":3,"decision":"healthy"}
+{"ts":"2026-05-23T16:18:20Z","fire_id":7,"fleet_size":2,"files_written_total":4,"decision":"healthy"}

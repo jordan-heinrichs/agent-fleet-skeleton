@@ -45,3 +45,7 @@ the rotation picker.
 - ./packs/example-research/output/findings/llm-parameter-efficiency-quantization-lora-2025.md ← researcher (fire #6)
 - ./packs/example-research/output/findings/llm-parameter-efficiency-quantization-lora-2025.md ← synthesizer (fire #6)
 - ./packs/example-research/output/synthesis/retrieval-augmented-generation-architecture-grounding-agentic-systems-2025.md ← synthesizer (fire #6)
+- ./packs/example-research/output/findings/test-time-compute-scaling-inference-reasoning-2025.md ← researcher (fire #7)
+- ./packs/example-research/output/synthesis/instruction-tuning-efficiency-quality-tradeoff-2025.md ← researcher (fire #7)
+- ./packs/example-research/output/findings/test-time-compute-scaling-inference-reasoning-2025.md ← synthesizer (fire #7)
+- ./packs/example-research/output/synthesis/instruction-tuning-efficiency-quality-tradeoff-2025.md ← synthesizer (fire #7)
