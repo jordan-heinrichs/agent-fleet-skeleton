@@ -85,3 +85,6 @@ the rotation picker.
 - ./packs/example-research/output/synthesis/multilingual-reasoning-transfer-authenticity-gap-2025.md ← synthesizer (fire #23)
 - ./packs/example-research/output/findings/adaptive-decoding-strategies-inference-efficiency-2025.md ← researcher (fire #23)
 - ./packs/example-research/output/synthesis/multilingual-reasoning-transfer-authenticity-gap-2025.md ← researcher (fire #23)
+- ./packs/example-research/output/findings/token-efficiency-dynamic-allocation-llms-2025.md ← researcher (fire #24)
+- ./packs/example-research/output/findings/token-efficiency-dynamic-allocation-llms-2025.md ← synthesizer (fire #24)
+- ./packs/example-research/output/synthesis/inference-time-optimization-speed-quality-reasoning-tradeoffs-2025.md ← synthesizer (fire #24)
