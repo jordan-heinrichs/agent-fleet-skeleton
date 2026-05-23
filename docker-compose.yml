@@ -13,26 +13,22 @@
 # AUTH NOTE: configured for Claude Max via OAuth on the mounted ~/.claude session.
 # Do NOT set ANTHROPIC_API_KEY in .env — that routes through API-key billing
 # and bypasses the Max subscription.
+#
+# WINDOWS NOTE: set HOST_HOME=C:/Users/YourName in .env. Do not use HOME —
+# it leaks into containers and overrides their internal home directory.
 
 services:
   redis:
-    image: redis:7-alpine
+    build:
+      context: .
+      dockerfile: docker/redis/Dockerfile
+    image: fleet-redis:latest
     container_name: fleet-redis
     restart: unless-stopped
-    # Doubles as the job/result queue AND the research cache.
-    # volatile-lru: when memory fills, evict only keys that HAVE a TTL (the
-    # cache entries) — queue keys have no TTL and are protected. That's the
-    # "keep hot, shed stale" behavior without ever dropping live work.
-    command:
-      - redis-server
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-      - --maxmemory
-      - "${REDIS_MAXMEMORY:-1gb}"
-      - --maxmemory-policy
-      - "volatile-lru"
+    environment:
+      REDIS_MANAGER_PASS: "${REDIS_MANAGER_PASS:-fleet-mgr-secret}"
+      REDIS_WORKER_PASS:  "${REDIS_WORKER_PASS:-fleet-wkr-secret}"
+      REDIS_MAXMEMORY:    "${REDIS_MAXMEMORY:-1gb}"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -57,41 +53,57 @@ services:
       - path: .env
         required: false
     environment:
-      TICK_INTERVAL_MINUTES: "${TICK_INTERVAL_MINUTES:-15}"
-      FLEET_SIZE: "${FLEET_SIZE:-2}"
-      WORKER_TIMEOUT_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"
-      AGENT_PROVIDER: "${AGENT_PROVIDER:-claude}"
-      AGENT_FALLBACK: "${AGENT_FALLBACK:-}"
-      CANARY_MODEL: "${CANARY_MODEL:-claude-haiku-4-5-20251001}"
-      FALLBACK_CANARY_MODEL: "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
-      OLLAMA_API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
-      ACTIVE_PACK: "${ACTIVE_PACK:-example-research}"
-      REDIS_URL: "redis://redis:6379"
-      JOB_QUEUE: "fleet:jobs"
-      RESULT_QUEUE: "fleet:results"
-      AGENT_AUTO_PUSH: "${AGENT_AUTO_PUSH:-false}"
-      BRANCH: "${BRANCH:-main}"
+      TICK_INTERVAL_MINUTES:      "${TICK_INTERVAL_MINUTES:-15}"
+      FLEET_SIZE:                 "${FLEET_SIZE:-2}"
+      MAX_FLEET_SIZE:             "${MAX_FLEET_SIZE:-4}"
+      MIN_TICK_INTERVAL_MINUTES:  "${MIN_TICK_INTERVAL_MINUTES:-5}"
+      WORKER_TIMEOUT_MINUTES:     "${CLAUDE_MAX_MINUTES:-20}"
+      AGENT_PROVIDER:             "${AGENT_PROVIDER:-claude}"
+      AGENT_FALLBACK:             "${AGENT_FALLBACK:-}"
+      CANARY_MODEL:               "${CANARY_MODEL:-claude-haiku-4-5-20251001}"
+      FALLBACK_CANARY_MODEL:      "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
+      OLLAMA_API_BASE:            "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
+      ACTIVE_PACK:                "${ACTIVE_PACK:-example-research}"
+      REDIS_URL:                  "redis://manager:${REDIS_MANAGER_PASS:-fleet-mgr-secret}@redis:6379"
+      JOB_QUEUE:                  "fleet:jobs"
+      RESULT_QUEUE:               "fleet:results"
+      AGENT_AUTO_PUSH:            "${AGENT_AUTO_PUSH:-false}"
+      BRANCH:                     "${BRANCH:-main}"
       GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/fleet/.ssh-writable/known_hosts'
-    # Lets the container reach a host-run Ollama at host.docker.internal.
-    # Docker Desktop maps this automatically; the entry is for Linux engines.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - type: bind
         source: .
         target: /workspace
-      # Claude Max credentials — same host session as your interactive Claude Code.
       - type: bind
-        source: ${HOME}/.claude
+        source: ${HOST_HOME:-${HOME}}/.claude
         target: /home/fleet/.claude
       - type: bind
-        source: ${HOME}/.claude.json
+        source: ${HOST_HOME:-${HOME}}/.claude.json
         target: /home/fleet/.claude.json.host
         read_only: true
-      # SSH key — required only if AGENT_AUTO_PUSH=true.
       - type: bind
-        source: ${HOME}/.ssh
+        source: ${HOST_HOME:-${HOME}}/.ssh
         target: /home/fleet/.ssh
+        read_only: true
+
+  monitor:
+    build:
+      context: .
+      dockerfile: docker/monitor/Dockerfile
+    image: fleet-monitor:latest
+    container_name: fleet-monitor
+    restart: unless-stopped
+    ports:
+      - "${MONITOR_PORT:-8080}:8080"
+    environment:
+      MONITOR_PORT: "8080"
+      ACTIVE_PACK:  "${ACTIVE_PACK:-example-research}"
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
         read_only: true
 
   worker:
@@ -111,20 +123,19 @@ services:
       - path: .env
         required: false
     environment:
-      REDIS_URL: "redis://redis:6379"
-      JOB_QUEUE: "fleet:jobs"
-      RESULT_QUEUE: "fleet:results"
+      REDIS_URL:          "redis://worker:${REDIS_WORKER_PASS:-fleet-wkr-secret}@redis:6379"
+      JOB_QUEUE:          "fleet:jobs"
+      RESULT_QUEUE:       "fleet:results"
       CLAUDE_MAX_MINUTES: "${CLAUDE_MAX_MINUTES:-20}"
-      AGENT_PROVIDER: "${AGENT_PROVIDER:-claude}"
-      AGENT_MODEL: "${AGENT_MODEL:-claude-sonnet-4-7}"
-      AGENT_FALLBACK: "${AGENT_FALLBACK:-}"
-      FALLBACK_MODEL: "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
-      OLLAMA_API_BASE: "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
-      ACTIVE_PACK: "${ACTIVE_PACK:-example-research}"
-      SEARXNG_URL: "${SEARXNG_URL:-http://searxng:8080}"
-      CACHE_TTL: "${CACHE_TTL:-86400}"
-      OLLAMA_NUM_CTX: "${OLLAMA_NUM_CTX:-16384}"
-    # Lets the worker reach a host-run Ollama at host.docker.internal.
+      AGENT_PROVIDER:     "${AGENT_PROVIDER:-claude}"
+      AGENT_MODEL:        "${AGENT_MODEL:-claude-sonnet-4-7}"
+      AGENT_FALLBACK:     "${AGENT_FALLBACK:-}"
+      FALLBACK_MODEL:     "${FALLBACK_MODEL:-qwen2.5-coder:14b}"
+      OLLAMA_API_BASE:    "${OLLAMA_API_BASE:-http://host.docker.internal:11434}"
+      ACTIVE_PACK:        "${ACTIVE_PACK:-example-research}"
+      SEARXNG_URL:        "${SEARXNG_URL:-http://searxng:8080}"
+      CACHE_TTL:          "${CACHE_TTL:-86400}"
+      OLLAMA_NUM_CTX:     "${OLLAMA_NUM_CTX:-16384}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -132,18 +143,15 @@ services:
         source: .
         target: /workspace
       # orchestrator/ is read-only for workers — the manager owns those files.
-      # This limits the blast radius of --dangerously-skip-permissions: a
-      # misbehaving worker cannot overwrite NORTH_STAR.json, the ledger, or
-      # the entrypoint scripts even with unrestricted agent tool access.
       - type: bind
         source: ./orchestrator
         target: /workspace/orchestrator
         read_only: true
       - type: bind
-        source: ${HOME}/.claude
+        source: ${HOST_HOME:-${HOME}}/.claude
         target: /home/fleet/.claude
       - type: bind
-        source: ${HOME}/.claude.json
+        source: ${HOST_HOME:-${HOME}}/.claude.json
         target: /home/fleet/.claude.json.host
         read_only: true
     deploy:
@@ -151,8 +159,6 @@ services:
 
   # Optional web-grounding search engine. Only starts with:
   #   docker compose --profile grounding up -d --build
-  # Enable per-pack via WEB_GROUNDING=true in the pack's pack.env.
-  # Free, self-hosted, no API key. Workers query it at http://searxng:8080.
   searxng:
     image: searxng/searxng:latest
     container_name: fleet-searxng
