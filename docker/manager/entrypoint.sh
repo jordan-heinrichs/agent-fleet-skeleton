@@ -15,6 +15,8 @@ set -u
 WORKDIR="${WORKDIR:-/workspace}"
 TICK_INTERVAL_MINUTES="${TICK_INTERVAL_MINUTES:-15}"
 FLEET_SIZE="${FLEET_SIZE:-2}"
+MAX_FLEET_SIZE="${MAX_FLEET_SIZE:-4}"
+MIN_TICK_INTERVAL_MINUTES="${MIN_TICK_INTERVAL_MINUTES:-5}"
 REDIS_URL="${REDIS_URL:-redis://redis:6379}"
 JOB_QUEUE="${JOB_QUEUE:-fleet:jobs}"
 RESULT_QUEUE="${RESULT_QUEUE:-fleet:results}"
@@ -94,6 +96,16 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 mkdir -p "$ORCH_DIR/WORKER_REPORTS"
+
+# H-02: On boot, recover any jobs left in the processing queue by a previous
+# crash — move them back so they get retried this session.
+orphaned=$(redis LLEN "${JOB_QUEUE}-processing" 2>/dev/null || echo 0)
+if [ "${orphaned:-0}" -gt 0 ] 2>/dev/null; then
+  for _i in $(seq 1 "$orphaned"); do
+    redis LMOVE "${JOB_QUEUE}-processing" "$JOB_QUEUE" LEFT RIGHT >/dev/null 2>&1 || true
+  done
+  log "requeued $orphaned orphaned job(s) from previous crash"
+fi
 
 # Discover roles from the active pack's ROLES.md (`## <name>` headings).
 discover_roles() {
@@ -207,6 +219,70 @@ MARKER
   log "supervisor: wrote $STUCK_FILE"
 }
 
+# Governor — reads last 20 worker sessions, steps fleet_size / tick_interval
+# up or down based on throttle rate, writes RUNTIME_CONFIG.json for the monitor.
+# Only the manager Redis user has write access to fleet:config.
+governor_pass() {
+  local fire_id="$1"
+  local window=20 throttle_count=0 total_count=0 throttle_pct=0
+  local cur_fleet cur_tick new_fleet new_tick final_fleet final_tick
+
+  while IFS= read -r f; do
+    local status
+    status=$(jq -r '.status // ""' "$f" 2>/dev/null)
+    [ -z "$status" ] && continue
+    total_count=$((total_count + 1))
+    case "$status" in exhausted|fast_fail) throttle_count=$((throttle_count + 1));; esac
+  done < <(ls -t "$ORCH_DIR/WORKER_REPORTS"/fire-*.json 2>/dev/null | head -"$window")
+
+  cur_fleet=$(redis HGET fleet:config fleet_size 2>/dev/null || echo "")
+  cur_tick=$(redis HGET fleet:config tick_interval_minutes 2>/dev/null || echo "")
+  case "$cur_fleet" in ''|*[!0-9]*) cur_fleet="$FLEET_SIZE";; esac
+  case "$cur_tick"  in ''|*[!0-9]*) cur_tick="$TICK_INTERVAL_MINUTES";; esac
+
+  local max_fleet min_tick
+  max_fleet="$MAX_FLEET_SIZE"; min_tick="$MIN_TICK_INTERVAL_MINUTES"
+  case "$max_fleet" in ''|*[!0-9]*) max_fleet=4;; esac
+  case "$min_tick"  in ''|*[!0-9]*) min_tick=5;; esac
+
+  if [ "$total_count" -gt 0 ]; then
+    throttle_pct=$(( throttle_count * 100 / total_count ))
+  fi
+
+  if [ "$throttle_pct" -ge 50 ]; then
+    new_fleet=$(( cur_fleet > 1 ? cur_fleet - 1 : 1 ))
+    new_tick=$(( cur_tick + 5 < 120 ? cur_tick + 5 : 120 ))
+    redis HSET fleet:config fleet_size "$new_fleet" tick_interval_minutes "$new_tick" >/dev/null
+    log "governor: throttle=${throttle_pct}% (${throttle_count}/${total_count}) → fleet=$new_fleet tick=${new_tick}m [step down]"
+  elif [ "$throttle_pct" -eq 0 ] && [ "$total_count" -ge "$window" ]; then
+    new_fleet=$(( cur_fleet < max_fleet ? cur_fleet + 1 : max_fleet ))
+    new_tick=$(( cur_tick > min_tick + 4 ? cur_tick - 5 : min_tick ))
+    redis HSET fleet:config fleet_size "$new_fleet" tick_interval_minutes "$new_tick" >/dev/null
+    log "governor: clear window (${total_count}) → fleet=$new_fleet tick=${new_tick}m [step up]"
+  else
+    log "governor: throttle=${throttle_pct}% (${throttle_count}/${total_count}) — holding fleet=$cur_fleet tick=${cur_tick}m"
+  fi
+
+  final_fleet=$(redis HGET fleet:config fleet_size 2>/dev/null || echo "")
+  final_tick=$(redis HGET fleet:config tick_interval_minutes 2>/dev/null || echo "")
+  case "$final_fleet" in ''|*[!0-9]*) final_fleet="$cur_fleet";; esac
+  case "$final_tick"  in ''|*[!0-9]*) final_tick="$cur_tick";; esac
+
+  jq -nc \
+    --arg fleet     "$final_fleet" --arg tick        "$final_tick" \
+    --arg fleet_def "$FLEET_SIZE"  --arg tick_def    "$TICK_INTERVAL_MINUTES" \
+    --arg max_fleet "$max_fleet"   --arg min_tick    "$min_tick" \
+    --arg tpct      "$throttle_pct" --arg tcount     "$throttle_count" \
+    --arg total     "$total_count"  --arg fire_id    "$fire_id" \
+    --arg ts        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{fleet_size:($fleet|tonumber),tick_interval_minutes:($tick|tonumber),
+      fleet_size_default:($fleet_def|tonumber),tick_interval_default:($tick_def|tonumber),
+      max_fleet_size:($max_fleet|tonumber),min_tick_interval:($min_tick|tonumber),
+      throttle_pct:($tpct|tonumber),throttle_count:($tcount|tonumber),
+      total_sessions_checked:($total|tonumber),updated_fire:($fire_id|tonumber),ts:$ts}' \
+    > "$ORCH_DIR/RUNTIME_CONFIG.json" 2>/dev/null || true
+}
+
 append_supervisor() {
   local fire_id="$1" decision="$2" files_total="$3"
   local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -219,6 +295,13 @@ fire_id=0
 while true; do
   fire_id=$((fire_id + 1))
   banner "FIRE #${fire_id} START"
+
+  # Refresh live config from Redis — governor may have adjusted it last tick.
+  _rc_fleet=$(redis HGET fleet:config fleet_size 2>/dev/null || echo "")
+  _rc_tick=$(redis HGET fleet:config tick_interval_minutes 2>/dev/null || echo "")
+  case "$_rc_fleet" in ''|*[!0-9]*) ;; *) FLEET_SIZE="$_rc_fleet";; esac
+  case "$_rc_tick"  in ''|*[!0-9]*) ;; *) TICK_INTERVAL_MINUTES="$_rc_tick";; esac
+  log "tick config: fleet=$FLEET_SIZE interval=${TICK_INTERVAL_MINUTES}m"
 
   # STUCK halt check.
   if [ -f "$STUCK_FILE" ]; then
@@ -247,8 +330,9 @@ while true; do
     continue
   fi
 
-  # 3. Drain stale results, enqueue jobs
-  redis DEL "$RESULT_QUEUE" >/dev/null 2>&1 || true
+  # 3. Enqueue jobs into a fire-scoped result queue (H-01: late results from the
+  # previous fire land in their own key and are never lost by a DEL here).
+  fire_result_queue="${RESULT_QUEUE}:fire-${fire_id}"
   banner "ENQUEUE JOBS"
   for r in "${PICKED_ROLES[@]}"; do
     job=$(build_job_json "$fire_id" "$r" "$WORKER_TIMEOUT_MINUTES")
@@ -272,7 +356,7 @@ while true; do
     REMAINING=$((DEADLINE - NOW))
     [ "$REMAINING" -gt 1800 ] && REMAINING=1800
     [ "$REMAINING" -lt 1 ] && REMAINING=1
-    raw=$(redis BRPOP "$RESULT_QUEUE" "$REMAINING" 2>/dev/null || true)
+    raw=$(redis BRPOP "$fire_result_queue" "$REMAINING" 2>/dev/null || true)
     payload=$(printf '%s\n' "$raw" | tail -n +2)
     [ -z "$payload" ] && { log "WARN: empty BRPOP"; continue; }
     role=$(printf '%s' "$payload" | jq -r '.role // "?"')
@@ -303,7 +387,11 @@ while true; do
   append_supervisor "$fire_id" "$decision" "$total_files_written"
   if check_stuck; then write_stuck_marker "$fire_id"; fi
 
-  # 6. Commit + optional push
+  # 6. Governor — adjust fleet_size / tick_interval based on rolling throttle rate.
+  banner "GOVERNOR PASS"
+  governor_pass "$fire_id"
+
+  # 7. Commit + optional push
   banner "COMMIT"
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     git add -A
@@ -316,6 +404,10 @@ while true; do
   if [ "$AUTO_PUSH" = "true" ]; then
     git push origin "$BRANCH" 2>&1 | sed 's/^/  /' >&2 && log "push OK" || log "WARN: push failed"
   fi
+
+  # Expire the fire-scoped result queue — stragglers after this belong to a
+  # dead fire and should not accumulate in Redis indefinitely.
+  redis EXPIRE "$fire_result_queue" 3600 >/dev/null 2>&1 || true
 
   banner "FIRE #${fire_id} END — sleeping ${TICK_INTERVAL_MINUTES}m"
   sleep "$((TICK_INTERVAL_MINUTES * 60))"

@@ -79,6 +79,14 @@ done
 
 log "boot: pack=$ACTIVE_PACK provider=$AGENT_PROVIDER model=$MODEL fallback=${AGENT_FALLBACK:-none} grounding=$WEB_GROUNDING max=${CLAUDE_MAX_MINUTES}m"
 
+# H-03: Copy ~/.claude to a per-worker private directory so concurrent workers
+# don't collide on OAuth token refresh writes to the shared bind-mounted dir.
+WORKER_CLAUDE_HOME="/tmp/claude-${WORKER_ID}"
+mkdir -p "$WORKER_CLAUDE_HOME/.claude"
+cp -r "$HOME/.claude/." "$WORKER_CLAUDE_HOME/.claude/" 2>/dev/null || true
+[ -f "$HOME/.claude.json" ] && cp "$HOME/.claude.json" "$WORKER_CLAUDE_HOME/.claude.json" 2>/dev/null || true
+log "claude home: private copy at $WORKER_CLAUDE_HOME"
+
 # Extract a role's full section from the active pack's ROLES.md (H2 match).
 extract_role_brief() {
   local role="$1"
@@ -251,7 +259,7 @@ emit_result() {
        extra: $extra,
        ts: (now | todate)
      }')
-  redis LPUSH "$RESULT_QUEUE" "$payload" >/dev/null
+  redis LPUSH "${RESULT_QUEUE}:fire-${fire_id}" "$payload" >/dev/null
   log "result pushed: $payload"
 }
 
@@ -266,11 +274,13 @@ agent_walled() {
 }
 
 while true; do
-  log "BRPOP $JOB_QUEUE ..."
-  raw=$(redis BRPOP "$JOB_QUEUE" 0 2>/dev/null || true)
-  job=$(printf '%s\n' "$raw" | tail -n +2)
+  log "waiting for job..."
+  # H-02: BLMOVE atomically moves the job into a processing list. If this
+  # worker crashes mid-run, the job stays in fleet:jobs-processing and gets
+  # requeued by the manager on next boot rather than being silently lost.
+  job=$(redis BLMOVE "$JOB_QUEUE" "${JOB_QUEUE}-processing" RIGHT LEFT 0 2>/dev/null || true)
   if [ -z "$job" ]; then
-    log "WARN: empty BRPOP — sleeping 5s"
+    log "WARN: empty BLMOVE — sleeping 5s"
     sleep 5
     continue
   fi
@@ -280,6 +290,7 @@ while true; do
   job_timeout=$(printf '%s' "$job" | jq -r '.timeout_minutes // empty')
   if [ -z "$role" ] || [ -z "$fire_id" ]; then
     log "WARN: malformed job, dropping: $job"
+    redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
     continue
   fi
   [ -n "$job_timeout" ] && [ "$job_timeout" -gt 0 ] 2>/dev/null && CLAUDE_MAX_MINUTES="$job_timeout"
@@ -307,8 +318,11 @@ while true; do
   # goes. Strong agents (Claude) write files themselves and ignore this.
   export FLEET_OUT_FILE="$(role_outfile "$role")"
 
+  # H-03: run agent with the per-worker private Claude home so concurrent workers
+  # don't race on OAuth token refreshes to the shared bind-mounted ~/.claude.
+
   START_TS=$(date +%s)
-  provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
+  HOME="$WORKER_CLAUDE_HOME" provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
   AGENT_EXIT=$?
   DURATION=$(( $(date +%s) - START_TS ))
   log "agent[$ACTIVE_PROVIDER:$ACTIVE_MODEL] exit=$AGENT_EXIT duration=${DURATION}s"
@@ -323,7 +337,7 @@ while true; do
     # Rebuild the prompt for the fallback provider's mode (agentic vs direct-gen).
     rm -f "$prompt_file"; prompt_file=$(build_prompt "$role" "$fire_id" "$ACTIVE_PROVIDER")
     START_TS=$(date +%s)
-    provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
+    HOME="$WORKER_CLAUDE_HOME" provider_run_agent "$ACTIVE_PROVIDER" "$prompt_file" "$CLAUDE_MAX_MINUTES" "$ACTIVE_MODEL" "$AGENT_LOG"
     AGENT_EXIT=$?
     DURATION=$(( $(date +%s) - START_TS ))
     log "agent[$ACTIVE_PROVIDER:$ACTIVE_MODEL] exit=$AGENT_EXIT duration=${DURATION}s"
@@ -343,6 +357,7 @@ while true; do
     emit_result "$role" "$fire_id" "$WALL_STATUS" "0" "0" "$DURATION" "$SNIPPET"
     sleep "$((PAUSE_BASE_MINUTES * 60))"
     rm -f "$AGENT_LOG"
+    redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
     continue
   fi
 
@@ -376,5 +391,6 @@ while true; do
   emit_result "$role" "$fire_id" "$STATUS" "$NEW_COUNT" "$ABORTS" "$DURATION" \
     "$(tail -2 "$AGENT_LOG" 2>/dev/null | tr '\n' ' ' | cut -c1-240)" "$NEW_FILES_JSON"
   rm -f "$AGENT_LOG"
+  redis LREM "${JOB_QUEUE}-processing" 1 "$job" >/dev/null 2>&1 || true
   log "JOB DONE: role=$role files=$NEW_COUNT"
 done
