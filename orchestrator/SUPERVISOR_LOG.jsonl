@@ -15,3 +15,4 @@
 {"ts":"2026-05-23T19:56:23Z","fire_id":19,"fleet_size":4,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T20:03:10Z","fire_id":20,"fleet_size":4,"files_written_total":3,"decision":"healthy"}
 {"ts":"2026-05-23T20:10:22Z","fire_id":21,"fleet_size":4,"files_written_total":3,"decision":"healthy"}
+{"ts":"2026-05-23T20:16:51Z","fire_id":22,"fleet_size":4,"files_written_total":4,"decision":"healthy"}

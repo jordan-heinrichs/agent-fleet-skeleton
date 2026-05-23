@@ -78,3 +78,7 @@ the rotation picker.
 - ./packs/example-research/output/findings/automated-prompt-optimization-techniques-2025.md ← researcher (fire #21)
 - ./packs/example-research/output/findings/automated-prompt-optimization-techniques-2025.md ← synthesizer (fire #21)
 - ./packs/example-research/output/synthesis/training-data-integrity-alignment-fairness-gap-2025.md ← synthesizer (fire #21)
+- ./packs/example-research/output/findings/speculative-decoding-early-exit-inference-efficiency-2025.md ← synthesizer (fire #22)
+- ./packs/example-research/output/synthesis/in-context-learning-few-shot-adaptation-efficiency-mechanisms-2025.md ← synthesizer (fire #22)
+- ./packs/example-research/output/findings/speculative-decoding-early-exit-inference-efficiency-2025.md ← researcher (fire #22)
+- ./packs/example-research/output/synthesis/in-context-learning-few-shot-adaptation-efficiency-mechanisms-2025.md ← researcher (fire #22)
